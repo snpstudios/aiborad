@@ -8,9 +8,25 @@
 </div>
 
 
+<img width="1650" height="1777" alt="Group 345" src="https://github.com/user-attachments/assets/b78176f1-8c1e-4154-b330-7d0c16559bfb" />
+
+
 ## 免提示词，内置玩法轻松选，一键构建创意画板
 
 我的 Nano Banan 创意玩法大全：[Nano-Banana Creation ZHO](https://github.com/ZHO-ZHO-ZHO/ZHO-nano-banana-Creation)
+
+
+### 功能主要包含两部分：
+
+1）生成/编辑部分：支持多图框选 + 选择玩法直接生成/编辑
+
+2）绘制部分，方便标注和手绘图作为输入
+
+
+
+https://github.com/user-attachments/assets/83c96432-4246-4c1c-9087-6d0669acdaed
+
+
 
 
 与 [香蕉超市｜Nano Bananary](https://github.com/ZHO-ZHO-ZHO/Nano-Bananary) 区别：

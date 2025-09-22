@@ -1,5 +1,7 @@
 
-export type Tool = 'select' | 'pan' | 'draw' | 'erase' | 'rectangle' | 'circle' | 'triangle';
+export type Tool = 'select' | 'pan' | 'draw' | 'erase' | 'rectangle' | 'circle' | 'triangle' | 'text' | 'arrow' | 'highlighter' | 'lasso' | 'line';
+
+export type WheelAction = 'zoom' | 'pan';
 
 export interface Point {
   x: number;
@@ -10,6 +12,10 @@ interface CanvasElementBase {
   id: string;
   x: number;
   y: number;
+  name?: string;
+  isVisible?: boolean;
+  isLocked?: boolean;
+  parentId?: string;
 }
 
 export interface ImageElement extends CanvasElementBase {
@@ -18,6 +24,7 @@ export interface ImageElement extends CanvasElementBase {
   width: number;
   height: number;
   mimeType: string;
+  borderRadius?: number;
 }
 
 export interface PathElement extends CanvasElementBase {
@@ -25,6 +32,7 @@ export interface PathElement extends CanvasElementBase {
   points: Point[];
   strokeColor: string;
   strokeWidth: number;
+  strokeOpacity?: number;
 }
 
 export interface ShapeElement extends CanvasElementBase {
@@ -35,6 +43,55 @@ export interface ShapeElement extends CanvasElementBase {
     strokeColor: string;
     strokeWidth: number;
     fillColor: string;
+    borderRadius?: number;
+    strokeDashArray?: [number, number];
 }
 
-export type Element = ImageElement | PathElement | ShapeElement;
+export interface TextElement extends CanvasElementBase {
+    type: 'text';
+    text: string;
+    fontSize: number;
+    fontColor: string;
+    width: number;
+    height: number;
+}
+
+export interface ArrowElement extends CanvasElementBase {
+    type: 'arrow';
+    points: [Point, Point];
+    strokeColor: string;
+    strokeWidth: number;
+}
+
+export interface LineElement extends CanvasElementBase {
+    type: 'line';
+    points: [Point, Point];
+    strokeColor: string;
+    strokeWidth: number;
+}
+
+export interface GroupElement extends CanvasElementBase {
+    type: 'group';
+    width: number;
+    height: number;
+}
+
+
+export type Element = ImageElement | PathElement | ShapeElement | TextElement | ArrowElement | LineElement | GroupElement;
+
+export interface UserEffect {
+  id: string;
+  name: string;
+  value: string;
+}
+
+export interface Board {
+  id: string;
+  name: string;
+  elements: Element[];
+  history: Element[][];
+  historyIndex: number;
+  panOffset: Point;
+  zoom: number;
+  canvasBackgroundColor: string;
+}

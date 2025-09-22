@@ -8,27 +8,14 @@ export default defineConfig(({ mode }) => {
       plugins: [react()],
       define: {
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.HTTPS_PROXY': JSON.stringify('http://localhost:7890'),
-        'process.env.HTTP_PROXY': JSON.stringify('http://localhost:7890')
+        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
       },
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
       },
-      // 配置代理，转发 Gemini API 请求通过本地 7890 端口
-      server: {
-        proxy: {
-          // 匹配所有以 Gemini API 域名开头的请求
-          '/v1beta': {
-            target: 'https://generativelanguage.googleapis.com',
-            changeOrigin: true,
-            rewrite: (path) => path
-          }
-        }
-      },
-      // 为开发服务器设置代理环境变量
+      // 由于API调用已移至后端，前端不再需要代理配置
       envPrefix: 'VITE_'
     };
 });

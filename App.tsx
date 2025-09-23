@@ -385,6 +385,23 @@ const App: React.FC = () => {
     const [language, setLanguage] = useState<'en' | 'zho'>('zho');
     const [uiTheme, setUiTheme] = useState({ color: '#171717', opacity: 0.7 });
     const [buttonTheme, setButtonTheme] = useState({ color: '#374151', opacity: 0.8 });
+    const [useCustomGeminiKey, setUseCustomGeminiKey] = useState(() => {
+        try {
+            const saved = localStorage.getItem('useCustomGeminiKey');
+            return saved ? JSON.parse(saved) : false;
+        } catch (error) {
+            console.error("Failed to parse useCustomGeminiKey from localStorage", error);
+            return false;
+        }
+    });
+    const [customGeminiKey, setCustomGeminiKey] = useState(() => {
+        try {
+            return localStorage.getItem('geminiApiKey') || '';
+        } catch (error) {
+            console.error("Failed to get geminiApiKey from localStorage", error);
+            return '';
+        }
+    });
     
     const [userEffects, setUserEffects] = useState<UserEffect[]>(() => {
         try {
@@ -1822,6 +1839,10 @@ const App: React.FC = () => {
                 wheelAction={wheelAction}
                 setWheelAction={setWheelAction}
                 t={t}
+                useCustomGeminiKey={useCustomGeminiKey}
+                setUseCustomGeminiKey={setUseCustomGeminiKey}
+                customGeminiKey={customGeminiKey}
+                setCustomGeminiKey={setCustomGeminiKey}
             />
             <Toolbar
                 t={t}

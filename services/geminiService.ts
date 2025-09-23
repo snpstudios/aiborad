@@ -1,5 +1,5 @@
 // 后端API基础URL
-const API_BASE_URL = 'http://localhost:3001/api';
+export const API_BASE_URL = 'http://localhost:3001/api';
 
 interface ImageInput {
   href: string;
@@ -19,24 +19,35 @@ export async function editImage(
   textResponse: string | null;
 }> {
   try {
+    // 检查是否有用户自定义的Gemini API密钥
+    const customGeminiKey = localStorage.getItem('geminiApiKey');
+    
     // 发送请求到后端API
     const response = await fetch(`${API_BASE_URL}/gemini/edit-image`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(customGeminiKey && { 'X-Gemini-API-Key': customGeminiKey }),
       },
       body: JSON.stringify({ images, prompt, mask }),
     });
 
-    if (!response.ok) {
-      throw new Error(`Backend API error: ${response.status} ${response.statusText}`);
+    // 解析响应数据，添加错误处理以防止非JSON响应
+    let data;
+    try {
+      data = await response.json();
+    } catch (jsonError) {
+      // 处理非JSON响应（如HTML错误页面）
+      const errorMessage = '服务器返回了无效的响应格式，请检查后端服务是否正常运行';
+      alert(errorMessage);
+      throw new Error(errorMessage);
     }
 
-    // 解析响应数据
-    const data = await response.json();
-
-    if (!data.success) {
-      throw new Error(data.error || 'Image editing failed');
+    if (!response.ok || !data.success) {
+      // 显示更友好的错误信息给用户
+      const errorMessage = data.error || '图像编辑失败';
+      alert(errorMessage);
+      throw new Error(errorMessage);
     }
 
     return {
@@ -61,24 +72,35 @@ export async function generateImageFromText(
   textResponse: string | null;
 }> {
   try {
+    // 检查是否有用户自定义的Gemini API密钥
+    const customGeminiKey = localStorage.getItem('geminiApiKey');
+    
     // 发送请求到后端API
     const response = await fetch(`${API_BASE_URL}/gemini/generate-image`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(customGeminiKey && { 'X-Gemini-API-Key': customGeminiKey }),
       },
       body: JSON.stringify({ prompt }),
     });
 
-    if (!response.ok) {
-      throw new Error(`Backend API error: ${response.status} ${response.statusText}`);
+    // 解析响应数据，添加错误处理以防止非JSON响应
+    let data;
+    try {
+      data = await response.json();
+    } catch (jsonError) {
+      // 处理非JSON响应（如HTML错误页面）
+      const errorMessage = '服务器返回了无效的响应格式，请检查后端服务是否正常运行';
+      alert(errorMessage);
+      throw new Error(errorMessage);
     }
 
-    // 解析响应数据
-    const data = await response.json();
-
-    if (!data.success) {
-      throw new Error(data.error || 'Image generation failed');
+    if (!response.ok || !data.success) {
+      // 显示更友好的错误信息给用户
+      const errorMessage = data.error || '图像生成失败';
+      alert(errorMessage);
+      throw new Error(errorMessage);
     }
 
     return {

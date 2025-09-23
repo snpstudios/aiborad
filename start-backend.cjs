@@ -18,18 +18,23 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// 初始化GoogleGenAI客户端
-const API_KEY = process.env.GEMINI_API_KEY;
+// 服务器的默认Gemini API密钥
+const SERVER_API_KEY = process.env.GEMINI_API_KEY;
 
-if (!API_KEY) {
+if (!SERVER_API_KEY) {
   console.error('Error: GEMINI_API_KEY environment variable is not set');
   console.error('Please create a .env file with your Gemini API key');
   process.exit(1);
 }
 
 // 检查是否有代理设置
-let clientOptions = {
-  apiKey: API_KEY,
+let defaultClientOptions = {
+  apiKey: SERVER_API_KEY,
+};
+
+// 为用户自定义API密钥创建基本客户端选项
+let userClientBaseOptions = {
+  apiKey: '', // 将在请求时动态设置
 };
 
 // 如果设置了代理环境变量，配置代理
@@ -55,20 +60,144 @@ if (process.env.HTTP_PROXY || process.env.HTTPS_PROXY) {
     port: proxyUrlObj.port
   });
   
-  clientOptions = {
-    ...clientOptions,
-    apiKey: API_KEY,
+  defaultClientOptions = {
+    ...defaultClientOptions,
+    fetchOptions: {
+      agent: proxyAgent
+    }
+  };
+  
+  userClientBaseOptions = {
+    ...userClientBaseOptions,
     fetchOptions: {
       agent: proxyAgent
     }
   };
 }
 
-const ai = new GoogleGenAI(clientOptions);
+// 默认客户端 - 使用服务器API密钥
+const defaultAI = new GoogleGenAI(defaultClientOptions);
+
+// 创建一个函数来根据请求头获取合适的AI客户端
+function getAIClientFromRequest(req) {
+  // 检查请求头中是否有用户自定义的API密钥
+  const userApiKey = req.headers['x-gemini-api-key'];
+  
+  if (userApiKey && typeof userApiKey === 'string') {
+    // 如果有用户自定义密钥，创建一个新的客户端实例
+    const userClientOptions = {
+      ...userClientBaseOptions,
+      apiKey: userApiKey
+    };
+    return new GoogleGenAI(userClientOptions);
+  } else {
+    // 否则使用默认客户端
+    return defaultAI;
+  }
+}
 
 // 健康检查路由
 app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'Server is running' });
+})
+
+/**
+ * 验证Gemini API密钥是否有效
+ */
+app.post('/api/gemini/validate-key', async (req, res) => {
+  try {
+    const { apiKey } = req.body;
+    
+    if (!apiKey || apiKey.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        error: 'API密钥不能为空'
+      });
+    }
+    
+    // 创建临时客户端用于验证密钥
+    let tempClientOptions = {
+      apiKey: apiKey
+    };
+    
+    // 如果配置了代理，也应用到临时客户端
+    if (process.env.HTTP_PROXY || process.env.HTTPS_PROXY) {
+      tempClientOptions = {
+        ...tempClientOptions,
+        fetchOptions: defaultClientOptions.fetchOptions
+      };
+    }
+    
+    const tempClient = new GoogleGenAI(tempClientOptions);
+    
+    // 使用Google Gemini API的countTokens端点进行密钥验证，这是一个轻量级的验证方法
+    // 使用与edit-image端点相同的模型以确保兼容性
+    const result = await tempClient.models.countTokens({
+      model: 'gemini-2.5-flash-image-preview',
+      contents: [{
+        parts: [{
+          text: '你好'
+        }]
+      }]
+    });
+    
+    
+    
+    return res.status(200).json({
+      success: true,
+      message: 'API密钥验证成功',
+      details: result
+    });
+  } catch (error) {
+    // 打印完整的错误信息到终端以便调试
+    console.error('Error validating API key:', JSON.stringify(error, null, 2));
+    
+    let errorMessage = 'API密钥验证失败';
+    let errorDetails = null;
+    let errorCode = 500;
+    
+    if (error instanceof Error) {
+      errorMessage = error.message;
+      
+      // 尝试解析JSON格式的错误信息
+      if (errorMessage.startsWith('{')) {
+        try {
+          const parsedError = JSON.parse(errorMessage);
+          if (parsedError.error) {
+            errorMessage = parsedError.error.message || errorMessage;
+            errorDetails = parsedError.error.details;
+            errorCode = parsedError.error.code || 500;
+          }
+        } catch (parseError) {
+          // 如果解析失败，使用原始错误消息
+        }
+      }
+      
+      // 特别处理API密钥无效的情况
+      if (errorMessage.includes('API key not valid') || errorMessage.includes('401')) {
+        errorMessage = 'Gemini API密钥无效，请检查您的密钥是否正确';
+        errorCode = 400;
+      }
+      // 处理其他常见错误
+      else if (errorMessage.includes('400')) {
+        errorCode = 400;
+      }
+      else if (errorMessage.includes('403')) {
+        errorMessage = 'Gemini API访问被拒绝，请检查您的密钥权限';
+        errorCode = 403;
+      }
+      else if (errorMessage.includes('429')) {
+        errorMessage = 'API请求过于频繁，请稍后再试';
+        errorCode = 429;
+      }
+    }
+    
+    return res.status(errorCode).json({
+      success: false,
+      error: errorMessage,
+      details: errorDetails
+    });
+  }
 });
 
 /**
@@ -109,6 +238,9 @@ app.post('/api/gemini/edit-image', async (req, res) => {
     const parts = maskPart
       ? [textPart, ...imageParts, maskPart]
       : [...imageParts, textPart];
+
+    // 获取适合的AI客户端（根据请求头决定是否使用用户自定义API密钥）
+    const ai = getAIClientFromRequest(req);
 
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image-preview',
@@ -169,6 +301,9 @@ app.post('/api/gemini/generate-image', async (req, res) => {
         error: 'Prompt is required'
       });
     }
+
+    // 获取适合的AI客户端（根据请求头决定是否使用用户自定义API密钥）
+    const ai = getAIClientFromRequest(req);
 
     const response = await ai.models.generateImages({
       model: 'imagen-4.0-generate-001',

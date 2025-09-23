@@ -169,7 +169,100 @@ geminiRouter.post('/generate-image', async (req: Request, res: Response) => {
     console.error('Error in generate-image endpoint:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'An unknown error occurred'
+      error: error instanceof Error ? error.message : 'An unknown error occurred'
+    });
+  }
+});
+
+/**
+ * @route POST /api/gemini/validate-key
+ * @description 验证Gemini API密钥是否有效
+ */
+geminiRouter.post('/validate-key', async (req: Request, res: Response) => {
+  try {
+    const { apiKey } = req.body;
+    
+    if (!apiKey || apiKey.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        error: 'API密钥不能为空'
+      });
+    }
+    
+    
+    // 创建临时客户端用于验证密钥
+    const tempClient = new GoogleGenAI({
+      apiKey: apiKey
+    });
+    
+    // 使用Google Gemini API的countTokens端点进行密钥验证，这是一个轻量级的验证方法
+    const model = tempClient.getGenerativeModel({
+      model: 'gemini-pro'
+    });
+    
+    const result = await model.countTokens({
+      contents: [{
+        parts: [{
+          text: '你好'
+        }]
+      }]
+    });
+    
+    
+    
+    return res.status(200).json({
+      success: true,
+      message: 'API密钥验证成功',
+      details: result
+    });
+  } catch (error) {
+    // 打印完整的错误信息到终端以便调试
+    console.error('Error validating API key:', JSON.stringify(error, null, 2));
+    
+    let errorMessage = 'API密钥验证失败';
+    let errorDetails = null;
+    let errorCode = 500;
+    
+    if (error instanceof Error) {
+      errorMessage = error.message;
+      
+      // 尝试解析JSON格式的错误信息
+      if (errorMessage.startsWith('{')) {
+        try {
+          const parsedError = JSON.parse(errorMessage);
+          if (parsedError.error) {
+            errorMessage = parsedError.error.message || errorMessage;
+            errorDetails = parsedError.error.details;
+            errorCode = parsedError.error.code || 500;
+          }
+        } catch (parseError) {
+          // 如果解析失败，使用原始错误消息
+        }
+      }
+      
+      // 特别处理API密钥无效的情况
+      if (errorMessage.includes('API key not valid') || errorMessage.includes('401')) {
+        errorMessage = 'Gemini API密钥无效，请检查您的密钥是否正确';
+        errorCode = 400;
+      }
+      // 处理其他常见错误
+      else if (errorMessage.includes('400')) {
+        errorCode = 400;
+      }
+      else if (errorMessage.includes('403')) {
+        errorMessage = 'Gemini API访问被拒绝，请检查您的密钥权限';
+        errorCode = 403;
+      }
+      else if (errorMessage.includes('429')) {
+        errorMessage = 'API请求过于频繁，请稍后再试';
+        errorCode = 429;
+      }
+    }
+    
+    return res.status(errorCode).json({
+      success: false,
+      error: errorMessage,
+      details: errorDetails
     });
   }
 });
@@ -188,6 +281,6 @@ app.use((err: any, req: Request, res: Response, next: any) => {
 
 // 启动服务器
 app.listen(port, () => {
-  console.log(`Backend server running on port ${port}`);
+  (`Backend server running on port ${port}`);
   console.log(`API endpoints available at http://localhost:${port}/api`);
 });

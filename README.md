@@ -19,6 +19,15 @@ View your app in AI Studio: https://ai.studio/apps/drive/1CsvkMqNnxdUrmJZYeSXNZD
 3. Run the app:
    `npm run dev`
 
+## Version 2.1.0 Changes
+
+This version (2.1.0) includes the following enhancements compared to version 2.0.1:
+
+1. **Gemini API Key Customization**: Added support for users to input and validate their own Gemini API keys directly from the UI
+2. **Key Validation System**: Implemented real-time API key validation functionality to ensure keys are valid before use
+3. **Loading State Management**: Added visual feedback during API key validation with loading states
+4. **Error Handling Improvements**: Enhanced error messages and user notifications for invalid API keys
+
 ## Version 2.0.1 Changes
 
 This version (2.0.1) includes the following enhancements compared to the original version:

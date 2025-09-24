@@ -8,6 +8,25 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { GoogleGenAI, Modality } = require('@google/genai');
+const { ProxyAgent, setGlobalDispatcher } = require('undici');
+
+// --- 核心代理设置 (参考 testproxy) ---
+const PROXY_URL = process.env.HTTPS_PROXY
+  || process.env.HTTP_PROXY
+  || process.env.ALL_PROXY
+  || process.env.https_proxy
+  || process.env.http_proxy
+  || process.env.all_proxy;
+
+if (PROXY_URL) {
+  console.log(`[代理配置] 检测到代理URL: ${PROXY_URL}`);
+  const proxyAgent = new ProxyAgent(PROXY_URL);
+  setGlobalDispatcher(proxyAgent);
+  console.log('[代理配置] undici 全局代理已成功设置。');
+} else {
+  console.log('[代理配置] 未检测到代理环境变量，将直接连接。');
+}
+// ---
 
 // 创建Express应用
 const app = express();
@@ -38,13 +57,13 @@ let userClientBaseOptions = {
 };
 
 // 如果设置了代理环境变量，配置代理
-if (process.env.HTTP_PROXY || process.env.HTTPS_PROXY) {
-  const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+if (process.env.http_proxy || process.env.https_proxy) {
+  const proxyUrl = process.env.https_proxy || process.env.http_proxy;
   console.log(`Using proxy: ${proxyUrl}`);
   
   // 设置全局代理环境变量，确保所有HTTP请求都使用代理
-  process.env.HTTP_PROXY = proxyUrl;
-  process.env.HTTPS_PROXY = proxyUrl;
+  process.env.http_proxy = proxyUrl;
+  process.env.https_proxy = proxyUrl;
   
   // 为GoogleGenAI客户端配置代理
   // 使用http-proxy-agent包，这是一个更简单的替代方案
@@ -121,7 +140,7 @@ app.post('/api/gemini/validate-key', async (req, res) => {
     };
     
     // 如果配置了代理，也应用到临时客户端
-    if (process.env.HTTP_PROXY || process.env.HTTPS_PROXY) {
+    if (process.env.http_proxy || process.env.https_proxy) {
       tempClientOptions = {
         ...tempClientOptions,
         fetchOptions: defaultClientOptions.fetchOptions
@@ -353,4 +372,4 @@ app.listen(port, () => {
   console.log(`Backend server running on port ${port}`);
   console.log(`API endpoints available at http://localhost:${port}/api`);
   console.log('Make sure you have set your GEMINI_API_KEY in the .env file');
-});
+}); 

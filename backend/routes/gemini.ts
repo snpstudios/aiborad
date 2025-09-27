@@ -28,6 +28,21 @@ type ImageInput = {
  */
 router.post('/edit-image', async (req: Request, res: Response) => {
   try {
+    // 检查当前日期是否在2025年12月20日之后
+    const currentDate = new Date();
+    const deadlineDate = new Date('2025-12-20T00:00:00.000Z');
+    
+    if (currentDate >= deadlineDate) {
+      // 检查是否有用户自定义的API密钥
+      const customApiKey = req.headers['x-gemini-api-key'] as string;
+      if (!customApiKey || typeof customApiKey !== 'string' || customApiKey.trim() === '') {
+        return res.status(400).json({
+          success: false,
+          error: '从2025年12月20日开始，使用图片编辑功能需要提供自定义的Gemini API密钥。请在设置中添加您的API密钥。'
+        });
+      }
+    }
+
     const { images, prompt, mask } = req.body;
 
     if (!images || !images.length || !prompt) {
@@ -235,6 +250,21 @@ router.post('/validate-key', async (req: Request, res: Response) => {
  */
 router.post('/generate-image', async (req: Request, res: Response) => {
   try {
+    // 检查当前日期是否在2025年12月20日之后
+    const currentDate = new Date();
+    const deadlineDate = new Date('2025-12-20T00:00:00.000Z');
+    
+    if (currentDate >= deadlineDate) {
+      // 检查是否有用户自定义的API密钥
+      const customApiKey = req.headers['x-gemini-api-key'] as string;
+      if (!customApiKey || typeof customApiKey !== 'string' || customApiKey.trim() === '') {
+        return res.status(400).json({
+          success: false,
+          error: '从2025年12月20日开始，使用图片生成功能需要提供自定义的Gemini API密钥。请在设置中添加您的API密钥。'
+        });
+      }
+    }
+
     const { prompt } = req.body;
 
     if (!prompt || prompt.trim() === '') {

@@ -1,8 +1,8 @@
 
 
-import React from 'react';
+import React, { useState } from 'react';
 import type { WheelAction } from '../types';
-import { API_BASE_URL } from '../services/geminiService';
+import { validateApiKey } from '../services/geminiService';
 
 interface CanvasSettingsProps {
     isOpen: boolean;
@@ -17,6 +17,8 @@ interface CanvasSettingsProps {
     setButtonTheme: (theme: { color: string; opacity: number }) => void;
     wheelAction: WheelAction;
     setWheelAction: (action: WheelAction) => void;
+    toolbarPosition: 'left' | 'right';
+    setToolbarPosition: (position: 'left' | 'right') => void;
     t: (key: string) => string;
     useCustomGeminiKey: boolean;
     setUseCustomGeminiKey: (use: boolean) => void;
@@ -37,6 +39,8 @@ export const CanvasSettings: React.FC<CanvasSettingsProps> = ({
     setButtonTheme,
     wheelAction,
     setWheelAction,
+    toolbarPosition,
+    setToolbarPosition,
     t,
     useCustomGeminiKey,
     setUseCustomGeminiKey,
@@ -44,7 +48,7 @@ export const CanvasSettings: React.FC<CanvasSettingsProps> = ({
     setCustomGeminiKey
 }) => {
     // 添加加载状态，用于API密钥验证过程
-    const [isSavingKey, setIsSavingKey] = React.useState(false);
+    const [isSavingKey, setIsSavingKey] = useState(false);
     
     if (!isOpen) return null;
 
@@ -136,6 +140,25 @@ export const CanvasSettings: React.FC<CanvasSettingsProps> = ({
                                 </button>
                             </div>
                         </div>
+
+                        {/* Toolbar Position Settings */}
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium text-gray-300">{t('settings.toolbarPosition')}</label>
+                            <div className="flex items-center gap-2 p-1 bg-black/20 rounded-md">
+                                <button 
+                                    onClick={() => setToolbarPosition('left')}
+                                    className={`flex-1 py-1.5 text-sm rounded ${toolbarPosition === 'left' ? 'bg-blue-500 text-white' : 'hover:bg-white/10'}`}
+                                >
+                                    {t('settings.left')}
+                                </button>
+                                <button 
+                                    onClick={() => setToolbarPosition('right')}
+                                    className={`flex-1 py-1.5 text-sm rounded ${toolbarPosition === 'right' ? 'bg-blue-500 text-white' : 'hover:bg-white/10'}`}
+                                >
+                                    {t('settings.right')}
+                                </button>
+                            </div>
+                        </div>
                     </div>
 
                     {/* 右侧列 */}
@@ -171,7 +194,7 @@ export const CanvasSettings: React.FC<CanvasSettingsProps> = ({
 
                         {/* Gemini API Key Settings */}
                         <div className="space-y-3">
-                            <h4 className="text-sm font-medium text-gray-300">{t('settings.geminiApiKey')}</h4>
+                            <h4 className="text-sm font-medium text-gray-300">{t('settings.geminiApiKey.title')}</h4>
                             <div className="flex items-center space-x-2">
                                 <input
                                     id="use-custom-key"
@@ -180,7 +203,7 @@ export const CanvasSettings: React.FC<CanvasSettingsProps> = ({
                                     onChange={(e) => setUseCustomGeminiKey(e.target.checked)}
                                     className="rounded text-blue-500 focus:ring-blue-500"
                                 />
-                                <label htmlFor="use-custom-key" className="text-sm text-gray-300">{t('settings.useCustomKey')}</label>
+                                <label htmlFor="use-custom-key" className="text-sm text-gray-300">{t('settings.geminiApiKey.useCustomKey')}</label>
                             </div>
                             
                             {useCustomGeminiKey && (
@@ -190,8 +213,8 @@ export const CanvasSettings: React.FC<CanvasSettingsProps> = ({
                                         type="text"
                                         value={customGeminiKey}
                                         onChange={(e) => setCustomGeminiKey(e.target.value)}
-                                        placeholder="Enter your Gemini API key"
-                                        className="w-full px-3 py-2 bg-black/20 border border-white/10 rounded-md text-white placeholder-gray-500 text-sm"
+                                        placeholder={t('settings.geminiApiKey.apiKeyPlaceholder')}
+                                        className="w-full px-3 py-2 bg-black/20 border border-white/10 rounded-md text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                     />
                                     <div className="flex gap-2">
                                         <button
@@ -199,63 +222,18 @@ export const CanvasSettings: React.FC<CanvasSettingsProps> = ({
                                             if (customGeminiKey && !isSavingKey) {
                                                 setIsSavingKey(true);
                                                 try {
-                                                    // 在保存前先验证API密钥
-                                                    const response = await fetch(`${API_BASE_URL}/gemini/validate-key`, {
-                                                        method: 'POST',
-                                                        headers: {
-                                                            'Content-Type': 'application/json',
-                                                        },
-                                                        body: JSON.stringify({ apiKey: customGeminiKey }),
-                                                        // 添加cache: 'no-store'以确保请求不会被缓存
-                                                        cache: 'no-store'
-                                                    });
-                                                    
-                                                    // 使用空的catch来阻止浏览器在控制台显示网络错误
-                                                    // 我们会手动处理所有错误情况
-                                                    
-                                                    // 检查响应状态码
-                                                    if (!response.ok) {
-                                                        // 即使状态码不是200，也要尝试解析JSON响应以获取详细错误信息
-                                                        let errorData;
-                                                        try {
-                                                            errorData = await response.json();
-                                                            alert(`验证失败: ${errorData.error || 'API密钥无效'}`);
-                                                        } catch (jsonError) {
-                                                            alert('API密钥验证失败，请检查密钥是否正确');
-                                                        }
-                                                        return;
+                                                    const result = await validateApiKey(customGeminiKey);
+                                                    if (result) {
+                                                        localStorage.setItem('geminiApiKey', customGeminiKey);
+                                                        localStorage.setItem('useCustomGeminiKey', 'true');
+                                                        alert(language === 'en' ? 'API key validated and saved successfully' : 'API密钥验证成功并已保存');
+                                                        onClose();
+                                                    } else {
+                                                        alert(language === 'en' ? 'API key validation failed. Please check your key.' : 'API密钥验证失败，请检查密钥是否正确');
                                                     }
-                                                    
-                                                    // 解析响应数据，添加错误处理以防止非JSON响应
-                                                    let data;
-                                                    try {
-                                                        data = await response.json();
-                                                    } catch (jsonError) {
-                                                        // 处理非JSON响应（如HTML错误页面）
-                                                        alert('服务器返回了无效的响应格式，请检查后端服务是否正常运行');
-                                                        return;
-                                                    }
-                                                    
-                                                    if (!data.success) {
-                                                        alert(`验证失败: ${data.error}`);
-                                                        return;
-                                                    }
-                                                    
-                                                    // 验证成功后保存到localStorage
-                                                    localStorage.setItem('geminiApiKey', customGeminiKey);
-                                                    localStorage.setItem('useCustomGeminiKey', 'true');
-                                                    alert(t('settings.keySaved'));
-                                                    // 保存成功后自动关闭设置面板
-                                                    onClose();
                                                 } catch (error) {
-                                                    // 尝试从错误对象中提取更具体的错误信息
-                                                    let errorMessage = '密钥验证过程中出现错误，请稍后再试';
-                                                    if (error instanceof Error) {
-                                                        errorMessage = error.message || errorMessage;
-                                                    }
-                                                    alert(errorMessage);
+                                                    alert(language === 'en' ? 'Error during validation. Please try again later.' : '验证过程中出现错误，请稍后再试');
                                                 } finally {
-                                                    // 确保loading状态总是会被重置
                                                     setIsSavingKey(false);
                                                 }
                                             }
@@ -263,7 +241,7 @@ export const CanvasSettings: React.FC<CanvasSettingsProps> = ({
                                             disabled={isSavingKey}
                                             className={`flex-1 px-3 py-1.5 text-white rounded-md text-sm ${isSavingKey ? 'bg-blue-700 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600'}`}
                                         >
-                                            {isSavingKey ? t('settings.validatingKey') : t('settings.saveKey')}
+                                            {isSavingKey ? t('settings.geminiApiKey.validation.saving') : t('settings.geminiApiKey.saveAndValidate')}
                                         </button>
                                         <button
                                             onClick={() => {
@@ -274,11 +252,11 @@ export const CanvasSettings: React.FC<CanvasSettingsProps> = ({
                                         }}
                                             className="flex-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white rounded-md text-sm"
                                         >
-                                            {t('settings.resetKey')}
+                                            {t('settings.geminiApiKey.reset')}
                                         </button>
                                     </div>
                                     <p className="text-xs text-gray-400">
-                                        提示：使用自定义API密钥可以避免服务器密钥流量限制问题。
+                                        {language === 'en' ? 'Tip: Using a custom API key can avoid server key traffic limitations.' : '提示：使用自定义API密钥可以避免服务器密钥流量限制问题。'}
                                     </p>
                                 </div>
                             )}

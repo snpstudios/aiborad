@@ -8,8 +8,9 @@ import { Loader } from './components/Loader';
 import { CanvasSettings } from './components/CanvasSettings';
 import { LayerPanel } from './components/LayerPanel';
 import { BoardPanel } from './components/BoardPanel';
-import type { Tool, Point, Element, ImageElement, PathElement, ShapeElement, TextElement, ArrowElement, UserEffect, LineElement, WheelAction, GroupElement, Board } from './types';
-import { editImage, generateImageFromText } from './services/geminiService';
+import { PresentationUI } from './components/PresentationUI';
+import type { Tool, Point, Element, ImageElement, PathElement, ShapeElement, TextElement, ArrowElement, UserEffect, LineElement, WheelAction, GroupElement, Board, VideoElement, FrameElement } from './types';
+import { editImage, generateImageFromText, generateVideo } from './services/geminiService';
 import { fileToDataUrl } from './utils/fileUtils';
 import { translations } from './translations';
 
@@ -31,7 +32,7 @@ const getElementBounds = (element: Element, allElements: Element[] = []): { x: n
         });
         return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
     }
-    if (element.type === 'image' || element.type === 'shape' || element.type === 'text') {
+    if (element.type === 'image' || element.type === 'shape' || element.type === 'text' || element.type === 'video' || element.type === 'frame') {
         return { x: element.x, y: element.y, width: element.width, height: element.height };
     }
     if (element.type === 'arrow' || element.type === 'line') {
@@ -72,7 +73,7 @@ const isPointInPolygon = (point: Point, polygon: Point[]): boolean => {
     return isInside;
 };
 
-const rasterizeElement = (element: Exclude<Element, ImageElement>): Promise<{ href: string; mimeType: 'image/png' }> => {
+const rasterizeElement = (element: Exclude<Element, ImageElement | VideoElement | FrameElement>): Promise<{ href: string; mimeType: 'image/png' }> => {
     return new Promise((resolve, reject) => {
         const bounds = getElementBounds(element);
         if (bounds.width <= 0 || bounds.height <= 0) {
@@ -138,7 +139,6 @@ const rasterizeElement = (element: Exclude<Element, ImageElement>): Promise<{ hr
                  elementSvgString = elementSvgString.replace(`x="${offsetX}"`, `x="${element.x + offsetX}"`).replace(`y="${offsetY}"`, `y="${element.y + offsetY}"`);
                 break;
             }
-// FIX: Added handling for 'group' element type. A group is a container and has no visual representation, so it produces an empty SVG string.
             case 'group': {
                 elementSvgString = '';
                 break;
@@ -149,7 +149,6 @@ const rasterizeElement = (element: Exclude<Element, ImageElement>): Promise<{ hr
         
         const img = new Image();
         img.crossOrigin = "anonymous";
-        // Use btoa for Base64 encoding. Handle potential special characters in SVG string to prevent errors.
         const svgDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(fullSvg)))}`;
 
         img.onload = () => {
@@ -171,7 +170,7 @@ const rasterizeElement = (element: Exclude<Element, ImageElement>): Promise<{ hr
     });
 };
 
-const rasterizeElements = (elementsToRasterize: Exclude<Element, ImageElement>[]): Promise<{ href: string; mimeType: 'image/png', width: number, height: number }> => {
+const rasterizeElements = (elementsToRasterize: Exclude<Element, ImageElement | VideoElement | FrameElement>[]): Promise<{ href: string; mimeType: 'image/png', width: number, height: number }> => {
     return new Promise((resolve, reject) => {
         if (elementsToRasterize.length === 0) {
             return reject(new Error("No elements to rasterize."));
@@ -250,7 +249,6 @@ const rasterizeElements = (elementsToRasterize: Exclude<Element, ImageElement>[]
                      `;
                     break;
                 }
-// FIX: Added handling for 'group' element type. A group is a container and has no visual representation, so it produces an empty SVG string.
                 case 'group': {
                     elementSvgString = '';
                     break;
@@ -361,9 +359,9 @@ const App: React.FC = () => {
     });
     const [activeBoardId, setActiveBoardId] = useState<string>(boards[0].id);
 
-    const activeBoard = useMemo(() => boards.find(b => b.id === activeBoardId)!, [boards, activeBoardId]);
+    const activeBoard = useMemo(() => boards.find(b => b.id === activeBoardId), [boards, activeBoardId]);
 
-    const { elements, history, historyIndex, panOffset, zoom, canvasBackgroundColor } = activeBoard;
+    const { elements = [], history = [[]], historyIndex = 0, panOffset = { x: 0, y: 0 }, zoom = 1, canvasBackgroundColor = '#111827' } = activeBoard || {};
 
     const [activeTool, setActiveTool] = useState<Tool>('select');
     const [drawingOptions, setDrawingOptions] = useState({ strokeColor: '#FFFFFF', strokeWidth: 5 });
@@ -373,18 +371,21 @@ const App: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(false);
-    const [isLayerPanelOpen, setIsLayerPanelOpen] = useState(false);
     const [isBoardPanelOpen, setIsBoardPanelOpen] = useState(false);
+    const [sidePanel, setSidePanel] = useState({ isOpen: false, tab: 'layers' as 'layers' | 'frames' });
     const [wheelAction, setWheelAction] = useState<WheelAction>('zoom');
     const [croppingState, setCroppingState] = useState<{ elementId: string; originalElement: ImageElement; cropBox: Rect } | null>(null);
     const [alignmentGuides, setAlignmentGuides] = useState<Guide[]>([]);
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; elementId: string | null } | null>(null);
     const [editingElement, setEditingElement] = useState<{ id: string; text: string; } | null>(null);
     const [lassoPath, setLassoPath] = useState<Point[] | null>(null);
+    const [presentationState, setPresentationState] = useState<{ isActive: boolean; currentFrameIndex: number; transition: 'direct' | 'smooth' } | null>(null);
 
     const [language, setLanguage] = useState<'en' | 'zho'>('zho');
-    const [uiTheme, setUiTheme] = useState({ color: '#171717', opacity: 0.7 });
+    const [uiTheme, setUiTheme] = useState({ color: '#374151', opacity: 0.7 });
     const [buttonTheme, setButtonTheme] = useState({ color: '#374151', opacity: 0.8 });
+    const [toolbarPosition, setToolbarPosition] = useState<'left' | 'right'>('left');
+    
     const [useCustomGeminiKey, setUseCustomGeminiKey] = useState(() => {
         try {
             const saved = localStorage.getItem('useCustomGeminiKey');
@@ -412,18 +413,24 @@ const App: React.FC = () => {
             return [];
         }
     });
+    
+    const [generationMode, setGenerationMode] = useState<'image' | 'video'>('image');
+    const [videoAspectRatio, setVideoAspectRatio] = useState<'16:9' | '9:16'>('9:16');
+    const [progressMessage, setProgressMessage] = useState<string>('');
 
     const interactionMode = useRef<string | null>(null);
     const startPoint = useRef<Point>({ x: 0, y: 0 });
     const currentDrawingElementId = useRef<string | null>(null);
-    const resizeStartInfo = useRef<{ originalElement: ImageElement | ShapeElement | TextElement; startCanvasPoint: Point; handle: string; shiftKey: boolean } | null>(null);
+    const resizeStartInfo = useRef<{ originalElement: ImageElement | ShapeElement | TextElement | VideoElement | FrameElement; startCanvasPoint: Point; handle: string; shiftKey: boolean } | null>(null);
     const cropStartInfo = useRef<{ originalCropBox: Rect, startCanvasPoint: Point } | null>(null);
     const dragStartElementPositions = useRef<Map<string, {x: number, y: number} | Point[]>>(new Map());
     const elementsRef = useRef(elements);
     const svgRef = useRef<SVGSVGElement>(null);
     const editingTextareaRef = useRef<HTMLTextAreaElement>(null);
+    const editingInputRef = useRef<HTMLInputElement>(null);
     const previousToolRef = useRef<Tool>('select');
     const spacebarDownTime = useRef<number | null>(null);
+    const animationFrameId = useRef<number | null>(null);
     elementsRef.current = elements;
 
     useEffect(() => {
@@ -431,6 +438,7 @@ const App: React.FC = () => {
         setEditingElement(null);
         setCroppingState(null);
         setSelectionBox(null);
+        setPrompt('');
     }, [activeBoardId]);
     
     useEffect(() => {
@@ -476,11 +484,34 @@ const App: React.FC = () => {
         root.style.setProperty('--button-bg-color', `rgba(${btnR}, ${btnG}, ${btnB}, ${buttonTheme.opacity})`);
     }, [uiTheme, buttonTheme]);
 
-    const updateActiveBoard = (updater: (board: Board) => Board) => {
-        setBoards(prevBoards => prevBoards.map(board =>
-            board.id === activeBoardId ? updater(board) : board
-        ));
+    const updateActiveBoard = (updater: (board: Board) => Board, commit: boolean = false) => {
+        setBoards(prevBoards => prevBoards.map(board => {
+            if (board.id !== activeBoardId) return board;
+            
+            const updatedBoard = updater(board);
+            if (commit) {
+                const newHistory = [...board.history.slice(0, board.historyIndex + 1), updatedBoard.elements];
+                 return {
+                    ...updatedBoard,
+                    history: newHistory,
+                    historyIndex: newHistory.length - 1,
+                };
+            }
+            return updatedBoard;
+        }));
     };
+
+    const getDescendants = useCallback((elementId: string, allElements: Element[]): Element[] => {
+        const descendants: Element[] = [];
+        const children = allElements.filter(el => el.parentId === elementId);
+        for (const child of children) {
+            descendants.push(child);
+            if (child.type === 'group') {
+                descendants.push(...getDescendants(child.id, allElements));
+            }
+        }
+        return descendants;
+    }, []);
 
     const setElements = (updater: (prev: Element[]) => Element[], commit: boolean = true) => {
         updateActiveBoard(board => {
@@ -511,7 +542,7 @@ const App: React.FC = () => {
                 history: newHistory,
                 historyIndex: newHistory.length - 1,
             };
-        });
+        }, true);
     }, [activeBoardId]);
 
     const handleUndo = useCallback(() => {
@@ -532,32 +563,31 @@ const App: React.FC = () => {
         });
     }, [activeBoardId]);
 
-    const getDescendants = useCallback((elementId: string, allElements: Element[]): Element[] => {
-        const descendants: Element[] = [];
-        const children = allElements.filter(el => el.parentId === elementId);
-        for (const child of children) {
-            descendants.push(child);
-            if (child.type === 'group') {
-                descendants.push(...getDescendants(child.id, allElements));
-            }
-        }
-        return descendants;
-    }, []);
-
     const handleStopEditing = useCallback(() => {
         if (!editingElement) return;
-        commitAction(prev => prev.map(el =>
-            el.id === editingElement.id && el.type === 'text'
-                ? { ...el, text: editingElement.text }
-                // Persist auto-height change on blur
-                : el.id === editingElement.id && el.type === 'text' && editingTextareaRef.current ? { ...el, text: editingElement.text, height: editingTextareaRef.current.scrollHeight }
-                : el
-        ));
+        commitAction(prev => prev.map(el => {
+            if (el.id === editingElement.id) {
+                if (el.type === 'text') {
+                    return { ...el, text: editingElement.text };
+                }
+                if (el.type === 'frame') {
+                    return { ...el, name: editingElement.text || 'Frame' };
+                }
+            }
+            return el;
+        }));
         setEditingElement(null);
     }, [commitAction, editingElement]);
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
+             if (presentationState?.isActive) {
+                if (e.key === 'ArrowRight') handleNavigatePresentation('next');
+                else if (e.key === 'ArrowLeft') handleNavigatePresentation('prev');
+                else if (e.key === 'Escape') handleExitPresentation();
+                return;
+            }
+
             if (editingElement) {
                 if(e.key === 'Escape') handleStopEditing();
                 return;
@@ -626,7 +656,7 @@ const App: React.FC = () => {
             window.removeEventListener('keydown', handleKeyDown);
             window.removeEventListener('keyup', handleKeyUp);
         };
-    }, [handleUndo, handleRedo, selectedElementIds, editingElement, activeTool, commitAction, getDescendants, handleStopEditing]);
+    }, [handleUndo, handleRedo, selectedElementIds, editingElement, activeTool, commitAction, getDescendants, handleStopEditing, presentationState]);
     
     const getCanvasPoint = useCallback((screenX: number, screenY: number): Point => {
         if (!svgRef.current) return { x: 0, y: 0 };
@@ -639,6 +669,42 @@ const App: React.FC = () => {
             y: (yOnSvg - panOffset.y) / zoom,
         };
     }, [panOffset, zoom]);
+
+    const addElementsWithParenting = useCallback((elementsToAdd: Element[], commit = true) => {
+        const updater = (prev: Element[]): Element[] => {
+            const frames = prev.filter(el => el.type === 'frame') as FrameElement[];
+            if (frames.length === 0) return [...prev, ...elementsToAdd];
+
+            const updatedElementsToAdd = elementsToAdd.map(newEl => {
+                if (newEl.parentId) return newEl; // Already has a parent
+
+                const newElBounds = getElementBounds(newEl, [...prev, ...elementsToAdd]);
+                 // Find the smallest frame that completely contains the new element
+                const containingFrame = frames
+                    .filter(frame => 
+                        newElBounds.x >= frame.x &&
+                        newElBounds.y >= frame.y &&
+                        newElBounds.x + newElBounds.width <= frame.x + frame.width &&
+                        newElBounds.y + newElBounds.height <= frame.y + frame.height
+                    )
+                    .sort((a, b) => (a.width * a.height) - (b.width * b.height))[0];
+
+                if (containingFrame) {
+                    return { ...newEl, parentId: containingFrame.id };
+                }
+                return newEl;
+            });
+
+            return [...prev, ...updatedElementsToAdd];
+        };
+
+        if (commit) {
+            commitAction(updater);
+        } else {
+            setElements(updater, false);
+        }
+    }, [commitAction, setElements]);
+
 
     const handleAddImageElement = useCallback(async (file: File) => {
         if (!file.type.startsWith('image/')) {
@@ -666,7 +732,7 @@ const App: React.FC = () => {
                     href: dataUrl,
                     mimeType: mimeType,
                 };
-                setElements(prev => [...prev, newImage]);
+                addElementsWithParenting([newImage]);
                 setSelectedElementIds([newImage.id]);
                 setActiveTool('select');
             };
@@ -675,7 +741,7 @@ const App: React.FC = () => {
             setError('Failed to load image.');
             console.error(err);
         }
-    }, [getCanvasPoint, activeBoardId, setElements]);
+    }, [getCanvasPoint, addElementsWithParenting]);
 
      const getSelectableElement = (elementId: string, allElements: Element[]): Element | null => {
         const element = allElements.find(el => el.id === elementId);
@@ -687,6 +753,7 @@ const App: React.FC = () => {
             const parent = allElements.find(el => el.id === current.parentId);
             if (!parent) return current; // Orphaned, treat as top-level
             if (parent.isLocked) return null; // Parent is locked, nothing inside is selectable
+            if (parent.type === 'frame') break; // Can select items inside a frame
             current = parent;
         }
         return current;
@@ -723,7 +790,7 @@ const App: React.FC = () => {
                 width: 150, height: 40,
                 text: "Text", fontSize: 24, fontColor: drawingOptions.strokeColor
             };
-            setElements(prev => [...prev, newText]);
+            addElementsWithParenting([newText]);
             setSelectedElementIds([newText.id]);
             setEditingElement({ id: newText.id, text: newText.text });
             setActiveTool('select');
@@ -737,7 +804,7 @@ const App: React.FC = () => {
         
         if (handleName && activeTool === 'select' && selectedElementIds.length === 1) {
             interactionMode.current = `resize-${handleName}`;
-            const element = elements.find(el => el.id === selectedElementIds[0]) as ImageElement | ShapeElement | TextElement;
+            const element = elements.find(el => el.id === selectedElementIds[0]) as ImageElement | ShapeElement | TextElement | VideoElement | FrameElement;
             resizeStartInfo.current = {
                 originalElement: { ...element },
                 startCanvasPoint: canvasStartPoint,
@@ -776,6 +843,21 @@ const App: React.FC = () => {
             }
             currentDrawingElementId.current = newShape.id;
             setElements(prev => [...prev, newShape], false);
+        } else if (activeTool === 'frame') {
+            interactionMode.current = 'drawFrame';
+            const frameCount = elements.filter(el => el.type === 'frame').length;
+            const newFrame: FrameElement = {
+                id: generateId(),
+                type: 'frame',
+                name: `Frame ${frameCount + 1}`,
+                x: canvasStartPoint.x,
+                y: canvasStartPoint.y,
+                width: 0,
+                height: 0,
+                backgroundColor: 'rgba(255, 255, 255, 0.05)',
+            };
+            currentDrawingElementId.current = newFrame.id;
+            setElements(prev => [newFrame, ...prev], false);
         } else if (activeTool === 'arrow') {
             interactionMode.current = 'drawArrow';
             const newArrow: ArrowElement = {
@@ -807,9 +889,10 @@ const App: React.FC = () => {
             const selectableElementId = selectableElement?.id;
 
             if (selectableElementId) {
-                if (e.detail === 2 && elements.find(el => el.id === selectableElementId)?.type === 'text') {
-                     const textEl = elements.find(el => el.id === selectableElementId) as TextElement;
-                     setEditingElement({ id: textEl.id, text: textEl.text });
+                const element = elements.find(el => el.id === selectableElementId);
+                if (e.detail === 2 && (element?.type === 'text' || element?.type === 'frame')) {
+                     const el = element as TextElement | FrameElement;
+                     setEditingElement({ id: el.id, text: el.type === 'text' ? el.text : el.name });
                      return;
                 }
                 if (!e.shiftKey && !selectedElementIds.includes(selectableElementId)) {
@@ -821,11 +904,21 @@ const App: React.FC = () => {
                 }
                 interactionMode.current = 'dragElements';
                 const idsToDrag = new Set<string>();
-                 if (selectableElement.type === 'group') {
-                    idsToDrag.add(selectableElement.id);
-                    getDescendants(selectableElement.id, elementsRef.current).forEach(desc => idsToDrag.add(desc.id));
+                 if (selectedElementIds.includes(selectableElementId)) {
+                    selectedElementIds.forEach(id => {
+                        const el = elementsRef.current.find(e => e.id === id);
+                        if (el) {
+                            idsToDrag.add(id);
+                            if (el.type === 'group' || el.type === 'frame') {
+                                getDescendants(id, elementsRef.current).forEach(desc => idsToDrag.add(desc.id));
+                            }
+                        }
+                    });
                 } else {
-                    idsToDrag.add(selectableElement.id);
+                    idsToDrag.add(selectableElementId);
+                     if (selectableElement.type === 'group' || selectableElement.type === 'frame') {
+                        getDescendants(selectableElementId, elementsRef.current).forEach(desc => idsToDrag.add(desc.id));
+                    }
                 }
 
                  const initialPositions = new Map<string, {x: number, y: number} | Point[]>();
@@ -973,16 +1066,17 @@ const App: React.FC = () => {
                 setLassoPath(prev => (prev ? [...prev, point] : [point]));
                 break;
             }
-            case 'drawShape': {
+            case 'drawShape':
+            case 'drawFrame': {
                  if (currentDrawingElementId.current) {
                     setElements(prev => prev.map(el => {
-                        if (el.id === currentDrawingElementId.current && el.type === 'shape') {
+                        if (el.id === currentDrawingElementId.current && (el.type === 'shape' || el.type === 'frame')) {
                             let newWidth = Math.abs(point.x - startCanvasPoint.x);
                             let newHeight = Math.abs(point.y - startCanvasPoint.y);
                             let newX = Math.min(point.x, startCanvasPoint.x);
                             let newY = Math.min(point.y, startCanvasPoint.y);
                             
-                            if (e.shiftKey) {
+                            if (e.shiftKey && el.type === 'shape') {
                                 if (el.shapeType === 'rectangle' || el.shapeType === 'circle') {
                                     const side = Math.max(newWidth, newHeight);
                                     newWidth = side;
@@ -1133,8 +1227,69 @@ const App: React.FC = () => {
     };
     
     const handleMouseUp = () => {
+        const commitAndParent = (drawnElementId: string | null) => {
+            if (!drawnElementId) {
+                commitAction(els => els); // Just commit the current state
+                return;
+            };
+
+            commitAction(els => {
+                const newElement = els.find(e => e.id === drawnElementId);
+                if (!newElement) return els;
+
+                const frames = els.filter(e => e.type === 'frame') as FrameElement[];
+                if (frames.length === 0) return els;
+
+                const newElBounds = getElementBounds(newElement, els);
+                // Find the smallest frame that completely contains the new element
+                const containingFrame = frames
+                    .filter(frame => 
+                        newElBounds.x >= frame.x &&
+                        newElBounds.y >= frame.y &&
+                        newElBounds.x + newElBounds.width <= frame.x + frame.width &&
+                        newElBounds.y + newElBounds.height <= frame.y + frame.height
+                    )
+                    .sort((a, b) => (a.width * a.height) - (b.width * b.height))[0];
+                
+                if (containingFrame && newElement.id !== containingFrame.id) {
+                    return els.map(el => el.id === newElement.id ? { ...el, parentId: containingFrame.id } : el);
+                }
+
+                return els;
+            });
+        };
+
         if (interactionMode.current) {
-            if (interactionMode.current === 'selectBox' && selectionBox) {
+            if (interactionMode.current === 'dragElements') {
+                commitAction(els => {
+                    const movingElementIds = new Set(dragStartElementPositions.current.keys());
+                    const frames = els.filter(e => e.type === 'frame') as FrameElement[];
+    
+                    return els.map(el => {
+                        if (!movingElementIds.has(el.id) || el.type === 'frame') return el;
+    
+                        // This element was moved, re-evaluate its parent
+                        const elBounds = getElementBounds(el, els);
+                        
+                        const containingFrame = frames
+                            .filter(frame => 
+                                elBounds.x >= frame.x &&
+                                elBounds.y >= frame.y &&
+                                elBounds.x + elBounds.width <= frame.x + frame.width &&
+                                elBounds.y + elBounds.height <= frame.y + frame.height
+                            )
+                            .sort((a, b) => (a.width * a.height) - (b.width * b.height))[0];
+                        
+                        const newParentId = containingFrame ? containingFrame.id : undefined;
+    
+                        if (el.parentId !== newParentId) {
+                            return { ...el, parentId: newParentId };
+                        }
+                        
+                        return el;
+                    });
+                });
+            } else if (interactionMode.current === 'selectBox' && selectionBox) {
                 const selectedIds: string[] = [];
                 const { x: sx, y: sy, width: sw, height: sh } = selectionBox;
                 
@@ -1156,8 +1311,19 @@ const App: React.FC = () => {
                 }).map(el => getSelectableElement(el.id, elements)?.id).filter((id): id is string => !!id);
                 setSelectedElementIds(prev => [...new Set([...prev, ...selectedIds])]);
                 setLassoPath(null);
-            } else if (['draw', 'drawShape', 'drawArrow', 'drawLine', 'dragElements', 'erase'].some(prefix => interactionMode.current?.startsWith(prefix)) || interactionMode.current.startsWith('resize-')) {
-                 commitAction(els => els); // This effectively commits the current state to history
+            } else if (['draw', 'drawShape', 'drawArrow', 'drawLine', 'drawFrame'].includes(interactionMode.current)) {
+                if (interactionMode.current === 'drawFrame') {
+                     commitAction(els => {
+                        const frame = els.find(el => el.id === currentDrawingElementId.current);
+                        if (!frame) return els;
+                        const otherElements = els.filter(el => el.id !== currentDrawingElementId.current);
+                        return [frame, ...otherElements];
+                    });
+                } else {
+                    commitAndParent(currentDrawingElementId.current);
+                }
+            } else if (['erase'].some(prefix => interactionMode.current?.startsWith(prefix)) || interactionMode.current.startsWith('resize-')) {
+                 commitAction(els => els); // Just commit the final state
             }
         }
         
@@ -1207,32 +1373,69 @@ const App: React.FC = () => {
             const elementsToCopy = [elementToCopy, ...getDescendants(elementToCopy.id, prev)];
             const idMap = new Map<string, string>();
             
-            const newElements: Element[] = elementsToCopy.map(el => {
+            const newElements: Element[] = elementsToCopy.map((el): Element => {
                 const newId = generateId();
                 idMap.set(el.id, newId);
                 const dx = 20 / zoom;
                 const dy = 20 / zoom;
-
-                let newElement: Element;
+                
+                // FIX: Ungrouped switch cases to aid TypeScript's discriminated union type inference.
+                // Spreading a union type (`...el`) can lead to an object type that doesn't strictly
+                // match any single member of the `Element` union, causing a type error. By handling
+                // each case separately, `el` is narrowed to a specific type, ensuring the spread is safe.
                 switch (el.type) {
                     case 'path':
-                        newElement = { ...el, id: newId, points: el.points.map(p => ({ x: p.x + dx, y: p.y + dy }))};
-                        break;
+                        return { ...el, id: newId, points: el.points.map(p => ({ x: p.x + dx, y: p.y + dy })) };
                     case 'arrow':
+                        return { ...el, id: newId, points: [{ x: el.points[0].x + dx, y: el.points[0].y + dy }, { x: el.points[1].x + dx, y: el.points[1].y + dy }] as [Point, Point] };
                     case 'line':
-                        newElement = { ...el, id: newId, points: [{ x: el.points[0].x + dx, y: el.points[0].y + dy }, { x: el.points[1].x + dx, y: el.points[1].y + dy }] as [Point, Point] };
-                        break;
-                    default:
-                        newElement = { ...el, id: newId, x: el.x + dx, y: el.y + dy };
-                        break;
+                         return { ...el, id: newId, points: [{ x: el.points[0].x + dx, y: el.points[0].y + dy }, { x: el.points[1].x + dx, y: el.points[1].y + dy }] as [Point, Point] };
+                    case 'image':
+                        return { ...el, id: newId, x: el.x + dx, y: el.y + dy };
+                    case 'shape':
+                        return { ...el, id: newId, x: el.x + dx, y: el.y + dy };
+                    case 'text':
+                        return { ...el, id: newId, x: el.x + dx, y: el.y + dy };
+                    case 'group':
+                        return { ...el, id: newId, x: el.x + dx, y: el.y + dy };
+                    case 'video':
+                        return { ...el, id: newId, x: el.x + dx, y: el.y + dy };
+                    case 'frame':
+                        return { ...el, id: newId, x: el.x + dx, y: el.y + dy, name: `${el.name} Copy` };
+                    default: {
+                        const _exhaustiveCheck: any = el;
+                        return _exhaustiveCheck;
+                    }
                 }
-                return newElement;
             });
             
-            const finalNewElements = newElements.map(el => ({
-                ...el,
-                parentId: el.parentId ? idMap.get(el.parentId) : undefined,
-            }));
+            const finalNewElements: Element[] = newElements.map((el): Element => {
+                const parentId = el.parentId ? idMap.get(el.parentId) : undefined;
+                switch (el.type) {
+                    case 'image':
+                        return { ...el, parentId };
+                    case 'path':
+                        return { ...el, parentId };
+                    case 'shape':
+                        return { ...el, parentId };
+                    case 'text':
+                        return { ...el, parentId };
+                    case 'arrow':
+                        return { ...el, parentId };
+                    case 'line':
+                        return { ...el, parentId };
+                    case 'group':
+                        return { ...el, parentId };
+                    case 'video':
+                        return { ...el, parentId };
+                    case 'frame':
+                         return { ...el, parentId };
+                    default: {
+                        const _exhaustiveCheck: any = el;
+                        return _exhaustiveCheck;
+                    }
+                }
+            });
             
             setSelectedElementIds([idMap.get(elementToCopy.id)!]);
             return [...prev, ...finalNewElements];
@@ -1300,11 +1503,15 @@ const App: React.FC = () => {
     };
     
     useEffect(() => {
-        if (editingElement && editingTextareaRef.current) {
+        if (editingElement) {
+            const element = elementsRef.current.find(el => el.id === editingElement.id);
             setTimeout(() => {
-                if (editingTextareaRef.current) {
+                if (element?.type === 'text' && editingTextareaRef.current) {
                     editingTextareaRef.current.focus();
                     editingTextareaRef.current.select();
+                } else if (element?.type === 'frame' && editingInputRef.current) {
+                    editingInputRef.current.focus();
+                    editingInputRef.current.select();
                 }
             }, 0);
         }
@@ -1328,6 +1535,20 @@ const App: React.FC = () => {
         }
     }, [editingElement?.text, setElements]);
 
+    const getFlattenedSelection = useCallback((selectionIds: string[], allElements: Element[]): Element[] => {
+        const selectedElements = allElements.filter(el => selectionIds.includes(el.id));
+        const elementSet = new Set<Element>();
+
+        selectedElements.forEach(el => {
+            elementSet.add(el);
+            if (el.type === 'group') {
+                getDescendants(el.id, allElements).forEach(desc => elementSet.add(desc));
+            }
+        });
+        
+        return Array.from(elementSet);
+    }, [getDescendants]);
+
 
     const handleGenerate = async () => {
         if (!prompt.trim()) {
@@ -1337,12 +1558,91 @@ const App: React.FC = () => {
 
         setIsLoading(true);
         setError(null);
+        setProgressMessage('Starting generation...');
 
+        if (generationMode === 'video') {
+            try {
+                const selectedElements = elements.filter(el => selectedElementIds.includes(el.id) && el.type !== 'frame');
+                const imageElement = selectedElements.find(el => el.type === 'image') as ImageElement | undefined;
+                
+                if (selectedElementIds.length > 1 || (selectedElementIds.length === 1 && !imageElement)) {
+                    setError('For video generation, please select a single image or no elements.');
+                    setIsLoading(false);
+                    return;
+                }
+                
+                const { videoBlob, mimeType } = await generateVideo(
+                    prompt, 
+                    videoAspectRatio, 
+                    (message) => setProgressMessage(message), 
+                    imageElement ? { href: imageElement.href, mimeType: imageElement.mimeType } : undefined
+                );
+
+                setProgressMessage('Processing video...');
+                const videoUrl = URL.createObjectURL(videoBlob);
+                const video = document.createElement('video');
+                
+                video.onloadedmetadata = () => {
+                    if (!svgRef.current) return;
+                    
+                    let newWidth = video.videoWidth;
+                    let newHeight = video.videoHeight;
+                    const MAX_DIM = 800;
+                    if (newWidth > MAX_DIM || newHeight > MAX_DIM) {
+                        const ratio = newWidth / newHeight;
+                        if (ratio > 1) { // landscape
+                            newWidth = MAX_DIM;
+                            newHeight = MAX_DIM / ratio;
+                        } else { // portrait or square
+                            newHeight = MAX_DIM;
+                            newWidth = MAX_DIM * ratio;
+                        }
+                    }
+
+                    const svgBounds = svgRef.current.getBoundingClientRect();
+                    const screenCenter = { x: svgBounds.left + svgBounds.width / 2, y: svgBounds.top + svgBounds.height / 2 };
+                    const canvasPoint = getCanvasPoint(screenCenter.x, screenCenter.y);
+                    const x = canvasPoint.x - (newWidth / 2);
+                    const y = canvasPoint.y - (newHeight / 2);
+
+                    const newVideoElement: VideoElement = {
+                        id: generateId(), type: 'video', name: 'Generated Video',
+                        x, y,
+                        width: newWidth,
+                        height: newHeight,
+                        href: videoUrl,
+                        mimeType,
+                    };
+
+                    addElementsWithParenting([newVideoElement]);
+                    setSelectedElementIds([newVideoElement.id]);
+                    setIsLoading(false);
+                };
+
+                video.onerror = () => {
+                    setError('Could not load generated video metadata.');
+                    setIsLoading(false);
+                };
+                
+                video.src = videoUrl;
+
+            } catch (err) {
+                 const error = err as Error; 
+                 setError(`Video generation failed: ${error.message}`); 
+                 console.error("Video generation failed:", error);
+                 setIsLoading(false);
+            }
+            return;
+        }
+
+
+        // IMAGE GENERATION LOGIC
         try {
             const isEditing = selectedElementIds.length > 0;
 
             if (isEditing) {
-                const selectedElements = elements.filter(el => selectedElementIds.includes(el.id));
+                const flattenedSelection = getFlattenedSelection(selectedElementIds, elements);
+                const selectedElements = flattenedSelection.filter(el => el.type !== 'frame');
                 const imageElements = selectedElements.filter(el => el.type === 'image') as ImageElement[];
                 const maskPaths = selectedElements.filter(el => el.type === 'path' && el.strokeOpacity && el.strokeOpacity < 1) as PathElement[];
 
@@ -1387,9 +1687,12 @@ const App: React.FC = () => {
                 }
                 
                 // Regular edit/combine logic
-                const imagePromises = selectedElements.map(el => {
-                    if (el.type === 'image') return Promise.resolve({ href: el.href, mimeType: el.mimeType });
-                    return rasterizeElement(el as Exclude<Element, ImageElement>);
+                const imagePromises = selectedElements
+                    .filter(el => el.type !== 'group')
+                    .map(el => {
+                        if (el.type === 'image') return Promise.resolve({ href: el.href, mimeType: el.mimeType });
+                        if (el.type === 'video' || el.type === 'frame') return Promise.reject(new Error("Cannot use video or frame elements in image generation."));
+                        return rasterizeElement(el as Exclude<Element, ImageElement | VideoElement | FrameElement | GroupElement>);
                 });
                 const imagesToProcess = await Promise.all(imagePromises);
                 const result = await editImage(imagesToProcess, prompt);
@@ -1401,7 +1704,7 @@ const App: React.FC = () => {
                     img.onload = () => {
                         let minX = Infinity, minY = Infinity, maxX = -Infinity;
                         selectedElements.forEach(el => {
-                            const bounds = getElementBounds(el);
+                            const bounds = getElementBounds(el, elements);
                             minX = Math.min(minX, bounds.x);
                             minY = Math.min(minY, bounds.y);
                             maxX = Math.max(maxX, bounds.x + bounds.width);
@@ -1414,7 +1717,7 @@ const App: React.FC = () => {
                             width: img.width, height: img.height,
                             href: `data:${newImageMimeType};base64,${newImageBase64}`, mimeType: newImageMimeType,
                         };
-                        commitAction(prev => [...prev, newImage]);
+                        addElementsWithParenting([newImage]);
                         setSelectedElementIds([newImage.id]);
                     };
                     img.onerror = () => setError('Failed to load the generated image.');
@@ -1444,7 +1747,7 @@ const App: React.FC = () => {
                             width: img.width, height: img.height,
                             href: `data:${newImageMimeType};base64,${newImageBase64}`, mimeType: newImageMimeType,
                         };
-                        commitAction(prev => [...prev, newImage]);
+                        addElementsWithParenting([newImage]);
                         setSelectedElementIds([newImage.id]);
                     };
                     img.onerror = () => setError('Failed to load the generated image.');
@@ -1505,9 +1808,10 @@ const App: React.FC = () => {
     };
     
     const handleRasterizeSelection = async () => {
-        const elementsToRasterize = elements.filter(
-            el => selectedElementIds.includes(el.id) && el.type !== 'image'
-        ) as Exclude<Element, ImageElement>[];
+        const flattenedSelection = getFlattenedSelection(selectedElementIds, elements);
+        const elementsToRasterize = flattenedSelection.filter(
+            el => el.type !== 'image' && el.type !== 'video' && el.type !== 'frame' && el.type !== 'group'
+        ) as Exclude<Element, ImageElement | VideoElement | FrameElement | GroupElement>[];
 
         if (elementsToRasterize.length === 0) return;
 
@@ -1518,7 +1822,7 @@ const App: React.FC = () => {
         try {
             let minX = Infinity, minY = Infinity;
             elementsToRasterize.forEach(element => {
-                const bounds = getElementBounds(element);
+                const bounds = getElementBounds(element, elements);
                 minX = Math.min(minX, bounds.x);
                 minY = Math.min(minY, bounds.y);
             });
@@ -1554,11 +1858,27 @@ const App: React.FC = () => {
         }
     };
 
+    const getSelectionBounds = useCallback((selectionIds: string[], allElements: Element[]): Rect => {
+        const selectedElements = allElements.filter(el => selectionIds.includes(el.id));
+        if (selectedElements.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        selectedElements.forEach(el => {
+            const bounds = getElementBounds(el, allElements);
+            minX = Math.min(minX, bounds.x);
+            minY = Math.min(minY, bounds.y);
+            maxX = Math.max(maxX, bounds.x + bounds.width);
+            maxY = Math.max(maxY, bounds.y + bounds.height);
+        });
+
+        return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+    }, []);
+
     const handleGroup = () => {
         const selectedElements = elements.filter(el => selectedElementIds.includes(el.id));
         if (selectedElements.length < 2) return;
         
-        const bounds = getSelectionBounds(selectedElementIds);
+        const bounds = getSelectionBounds(selectedElementIds, elements);
         const newGroupId = generateId();
 
         const newGroup: GroupElement = {
@@ -1619,27 +1939,11 @@ const App: React.FC = () => {
         return () => window.removeEventListener('paste', handlePaste);
     }, [handleAddImageElement]);
 
-    const getSelectionBounds = useCallback((selectionIds: string[]): Rect => {
-        const selectedElements = elementsRef.current.filter(el => selectionIds.includes(el.id));
-        if (selectedElements.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
-
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        selectedElements.forEach(el => {
-            const bounds = getElementBounds(el, elementsRef.current);
-            minX = Math.min(minX, bounds.x);
-            minY = Math.min(minY, bounds.y);
-            maxX = Math.max(maxX, bounds.x + bounds.width);
-            maxY = Math.max(maxY, bounds.y + bounds.height);
-        });
-
-        return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
-    }, []);
-
     const handleAlignSelection = (alignment: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => {
         const selectedElements = elementsRef.current.filter(el => selectedElementIds.includes(el.id));
         if (selectedElements.length < 2) return;
     
-        const selectionBounds = getSelectionBounds(selectedElementIds);
+        const selectionBounds = getSelectionBounds(selectedElementIds, elementsRef.current);
         const { x: minX, y: minY, width, height } = selectionBounds;
         const maxX = minX + width;
         const maxY = minY + height;
@@ -1673,7 +1977,10 @@ const App: React.FC = () => {
                     });
                 }
             });
-            // FIX: Refactored the .map() call to use a switch statement, improving TypeScript's type inference for discriminated unions and resolving the assignment error.
+
+            // FIX: TypeScript's inference can fail with spread on discriminated unions inside a .map().
+            // By explicitly creating typed variables for the new elements within each case, we ensure
+            // the returned array is correctly typed as Element[].
             return prev.map((el): Element => {
                 const delta = elementsToUpdate.get(el.id);
                 if (!delta) {
@@ -1683,16 +1990,54 @@ const App: React.FC = () => {
                 const { dx, dy } = delta;
                 
                 switch (el.type) {
-                    case 'image':
-                    case 'shape':
-                    case 'text':
-                    case 'group':
-                        return { ...el, x: el.x + dx, y: el.y + dy };
-                    case 'arrow':
-                    case 'line':
-                        return { ...el, points: el.points.map(p => ({ x: p.x + dx, y: p.y + dy })) as [Point, Point] };
-                    case 'path':
-                        return { ...el, points: el.points.map(p => ({ x: p.x + dx, y: p.y + dy })) };
+                    case 'image': {
+                        const newEl: ImageElement = { ...el, x: el.x + dx, y: el.y + dy };
+                        return newEl;
+                    }
+                    case 'shape': {
+                        const newEl: ShapeElement = { ...el, x: el.x + dx, y: el.y + dy };
+                        return newEl;
+                    }
+                    case 'text': {
+                        const newEl: TextElement = { ...el, x: el.x + dx, y: el.y + dy };
+                        return newEl;
+                    }
+                    case 'group': {
+                        const newEl: GroupElement = { ...el, x: el.x + dx, y: el.y + dy };
+                        return newEl;
+                    }
+                    case 'video': {
+                        const newEl: VideoElement = { ...el, x: el.x + dx, y: el.y + dy };
+                        return newEl;
+                    }
+                    case 'frame': {
+                        const newEl: FrameElement = { ...el, x: el.x + dx, y: el.y + dy };
+                        return newEl;
+                    }
+                    case 'arrow': {
+                        const newPoints: [Point, Point] = [
+                            { x: el.points[0].x + dx, y: el.points[0].y + dy },
+                            { x: el.points[1].x + dx, y: el.points[1].y + dy }
+                        ];
+                        const newEl: ArrowElement = { ...el, points: newPoints };
+                        return newEl;
+                    }
+                    case 'line': {
+                        const newPoints: [Point, Point] = [
+                            { x: el.points[0].x + dx, y: el.points[0].y + dy },
+                            { x: el.points[1].x + dx, y: el.points[1].y + dy }
+                        ];
+                        const newEl: LineElement = { ...el, points: newPoints };
+                        return newEl;
+                    }
+                    case 'path': {
+                        const newEl: PathElement = { ...el, points: el.points.map(p => ({ x: p.x + dx, y: p.y + dy })) };
+                        return newEl;
+                    }
+                    default: {
+                        const _exhaustiveCheck: any = el;
+                        return _exhaustiveCheck;
+                    }
                 }
             });
         });
@@ -1717,7 +2062,7 @@ const App: React.FC = () => {
     if (croppingState) cursor = 'default';
     else if (interactionMode.current === 'pan') cursor = 'grabbing';
     else if (activeTool === 'pan') cursor = 'grab';
-    else if (['draw', 'erase', 'rectangle', 'circle', 'triangle', 'arrow', 'line', 'text', 'highlighter', 'lasso'].includes(activeTool)) cursor = 'crosshair';
+    else if (['draw', 'erase', 'rectangle', 'circle', 'triangle', 'arrow', 'line', 'text', 'highlighter', 'lasso', 'frame'].includes(activeTool)) cursor = 'crosshair';
 
     // Board Management
     const handleAddBoard = () => {
@@ -1802,9 +2147,122 @@ const App: React.FC = () => {
         return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(fullSvg)))}`;
     }, []);
 
+    const zoomToFrame = useCallback((frameId: string, options: { animated?: boolean } = {}) => {
+        if (animationFrameId.current) {
+            cancelAnimationFrame(animationFrameId.current);
+        }
+
+        const frame = elementsRef.current.find(el => el.id === frameId && el.type === 'frame') as FrameElement;
+        if (!frame || !svgRef.current) return;
+    
+        const svgBounds = svgRef.current.getBoundingClientRect();
+        const padding = 50;
+        const frameWidth = frame.width;
+        const frameHeight = frame.height;
+        const viewportWidth = svgBounds.width - padding * 2;
+        const viewportHeight = svgBounds.height - padding * 2;
+    
+        const newZoom = Math.min(viewportWidth / frameWidth, viewportHeight / frameHeight);
+        const clampedZoom = Math.max(0.1, Math.min(newZoom, 10));
+    
+        const frameCanvasCenterX = frame.x + frame.width / 2;
+        const frameCanvasCenterY = frame.y + frame.height / 2;
+    
+        const newPanX = (svgBounds.width / 2) - (frameCanvasCenterX * clampedZoom);
+        const newPanY = (svgBounds.height / 2) - (frameCanvasCenterY * clampedZoom);
+    
+        if (!options.animated) {
+            updateActiveBoard(b => ({ ...b, zoom: clampedZoom, panOffset: { x: newPanX, y: newPanY } }));
+            return;
+        }
+
+        const startZoom = zoom;
+        const startPan = panOffset;
+        const duration = 600;
+        let startTime: number | null = null;
+        
+        const easeInOutCubic = (t: number) => t < 0.5 ? 4 * t * t * t : (t - 1) * (2 * t - 2) * (2 * t - 2) + 1;
+
+        const animate = (timestamp: number) => {
+            if (!startTime) startTime = timestamp;
+            const elapsed = timestamp - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            const easedProgress = easeInOutCubic(progress);
+
+            const currentZoom = startZoom + (clampedZoom - startZoom) * easedProgress;
+            const currentPanX = startPan.x + (newPanX - startPan.x) * easedProgress;
+            const currentPanY = startPan.y + (newPanY - startPan.y) * easedProgress;
+            
+            updateActiveBoard(b => ({ ...b, zoom: currentZoom, panOffset: { x: currentPanX, y: currentPanY } }));
+
+            if (progress < 1) {
+                animationFrameId.current = requestAnimationFrame(animate);
+            } else {
+                animationFrameId.current = null;
+            }
+        };
+
+        animationFrameId.current = requestAnimationFrame(animate);
+
+    }, [zoom, panOffset, activeBoardId, setBoards]);
+
+    const frames = useMemo(() => elements.filter(el => el.type === 'frame') as FrameElement[], [elements]);
+
+    const handleStartPresentation = () => {
+        if (frames.length === 0) return;
+        setSidePanel(prev => ({ ...prev, isOpen: false }));
+        setPresentationState({ isActive: true, currentFrameIndex: 0, transition: 'smooth' });
+        zoomToFrame(frames[0].id, { animated: true });
+    };
+
+    const handleExitPresentation = () => {
+        setPresentationState(null);
+    };
+
+    const handleNavigatePresentation = (direction: 'next' | 'prev') => {
+        if (!presentationState) return;
+        const newIndex = direction === 'next' 
+            ? Math.min(frames.length - 1, presentationState.currentFrameIndex + 1)
+            : Math.max(0, presentationState.currentFrameIndex - 1);
+        
+        if (newIndex !== presentationState.currentFrameIndex) {
+            setPresentationState(prev => ({ ...prev!, currentFrameIndex: newIndex }));
+            zoomToFrame(frames[newIndex].id, { animated: presentationState.transition === 'smooth' });
+        }
+    };
+    
+    const handleToggleSidePanel = (tab: 'layers' | 'frames') => {
+        setSidePanel(prev => ({
+            tab,
+            isOpen: prev.tab === tab ? !prev.isOpen : true
+        }));
+    };
+
+    const handleReorderElements = (draggedId: string, targetId: string, position: 'before' | 'after') => {
+        commitAction(prev => {
+            const elementsCopy = [...prev];
+            const draggedIndex = elementsCopy.findIndex(el => el.id === draggedId);
+            if (draggedIndex === -1) return prev;
+
+            const [element] = elementsCopy.splice(draggedIndex, 1);
+
+            const targetIndex = elementsCopy.findIndex(el => el.id === targetId);
+            if (targetIndex === -1) {
+                // Fallback: move to end
+                elementsCopy.push(element);
+                return elementsCopy;
+            }
+
+            const finalIndex = position === 'before' ? targetIndex : targetIndex + 1;
+            elementsCopy.splice(finalIndex, 0, element);
+
+            return elementsCopy;
+        });
+    };
+
     return (
-        <div className="w-screen h-screen flex flex-col font-sans" style={{ backgroundColor: canvasBackgroundColor }} onDragOver={handleDragOver} onDrop={handleDrop}>
-            {isLoading && <Loader />}
+        <div className="w-screen h-screen flex flex-col font-sans relative" style={{ backgroundColor: presentationState?.isActive ? '#000' : canvasBackgroundColor }} onDragOver={handleDragOver} onDrop={handleDrop}>
+            {isLoading && <Loader progressMessage={progressMessage} />}
             {error && (
                 <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 p-3 bg-red-100 border border-red-400 text-red-700 rounded-md shadow-lg flex items-center max-w-lg">
                     <span className="flex-grow">{error}</span>
@@ -1813,84 +2271,109 @@ const App: React.FC = () => {
                     </button>
                 </div>
             )}
-            <BoardPanel
-                isOpen={isBoardPanelOpen}
-                onClose={() => setIsBoardPanelOpen(false)}
-                boards={boards}
-                activeBoardId={activeBoardId}
-                onSwitchBoard={setActiveBoardId}
-                onAddBoard={handleAddBoard}
-                onRenameBoard={handleRenameBoard}
-                onDuplicateBoard={handleDuplicateBoard}
-                onDeleteBoard={handleDeleteBoard}
-                generateBoardThumbnail={(els) => generateBoardThumbnail(els, activeBoard.canvasBackgroundColor)}
-            />
-            <CanvasSettings 
-                isOpen={isSettingsPanelOpen} 
-                onClose={() => setIsSettingsPanelOpen(false)} 
-                canvasBackgroundColor={canvasBackgroundColor} 
-                onCanvasBackgroundColorChange={handleCanvasBackgroundColorChange}
-                language={language}
-                setLanguage={setLanguage}
-                uiTheme={uiTheme}
-                setUiTheme={setUiTheme}
-                buttonTheme={buttonTheme}
-                setButtonTheme={setButtonTheme}
-                wheelAction={wheelAction}
-                setWheelAction={setWheelAction}
-                t={t}
-                useCustomGeminiKey={useCustomGeminiKey}
-                setUseCustomGeminiKey={setUseCustomGeminiKey}
-                customGeminiKey={customGeminiKey}
-                setCustomGeminiKey={setCustomGeminiKey}
-            />
-            <Toolbar
-                t={t}
-                activeTool={activeTool}
-                setActiveTool={setActiveTool}
-                drawingOptions={drawingOptions}
-                setDrawingOptions={setDrawingOptions}
-                onUpload={handleAddImageElement}
-                isCropping={!!croppingState}
-                onConfirmCrop={handleConfirmCrop}
-                onCancelCrop={handleCancelCrop}
-                onSettingsClick={() => setIsSettingsPanelOpen(true)}
-                onLayersClick={() => setIsLayerPanelOpen(prev => !prev)}
-                onBoardsClick={() => setIsBoardPanelOpen(prev => !prev)}
-                onUndo={handleUndo}
-                onRedo={handleRedo}
-                canUndo={historyIndex > 0}
-                canRedo={historyIndex < history.length - 1}
-            />
-             <LayerPanel
-                isOpen={isLayerPanelOpen}
-                onClose={() => setIsLayerPanelOpen(false)}
-                elements={elements}
-                selectedElementIds={selectedElementIds}
-                onSelectElement={id => setSelectedElementIds(id ? [id] : [])}
-                onToggleVisibility={id => handlePropertyChange(id, { isVisible: !(elements.find(el => el.id === id)?.isVisible ?? true) })}
-                onToggleLock={id => handlePropertyChange(id, { isLocked: !(elements.find(el => el.id === id)?.isLocked ?? false) })}
-                onRenameElement={(id, name) => handlePropertyChange(id, { name })}
-                onReorder={(draggedId, targetId, position) => {
-                    commitAction(prev => {
-                        const newElements = [...prev];
-                        const draggedIndex = newElements.findIndex(el => el.id === draggedId);
-                        if (draggedIndex === -1) return prev;
+            {!presentationState?.isActive && (
+                <>
+                    <div className="absolute top-4 left-4 z-20">
+                        <button
+                            onClick={() => setIsBoardPanelOpen(prev => !prev)}
+                            style={{ backgroundColor: 'var(--ui-bg-color)' }}
+                            title={t('toolbar.boards')}
+                            className="w-12 h-12 flex items-center justify-center backdrop-blur-xl border border-white/10 rounded-full shadow-2xl text-white hover:bg-white/20 transition-colors"
+                        >
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                        </button>
+                    </div>
 
-                        const [draggedItem] = newElements.splice(draggedIndex, 1);
-                        const targetIndex = newElements.findIndex(el => el.id === targetId);
-                        if (targetIndex === -1) {
-                            newElements.push(draggedItem); // Fallback
-                            return newElements;
-                        }
-                        
-                        const finalIndex = position === 'before' ? targetIndex : targetIndex + 1;
-                        newElements.splice(finalIndex, 0, draggedItem);
-                        
-                        return newElements;
-                    });
-                }}
-            />
+                     <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
+                        <div 
+                            style={{ backgroundColor: 'var(--ui-bg-color)' }}
+                            className="flex items-center gap-1 p-1 backdrop-blur-xl border border-white/10 rounded-full shadow-2xl"
+                        >
+                            <button
+                                onClick={handleStartPresentation}
+                                title={t('sidePanel.present')}
+                                disabled={frames.length === 0}
+                                className="p-2 rounded-full text-white hover:bg-white/20 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                            >
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                            </button>
+                            <div className="w-px h-5 bg-white/20 mx-1"></div>
+                            <button onClick={() => handleToggleSidePanel('layers')} title={t('toolbar.layers')} className="p-2 rounded-full text-white hover:bg-white/20 transition-colors"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg></button>
+                            <button onClick={() => handleToggleSidePanel('frames')} title={t('toolbar.frames')} className="p-2 rounded-full text-white hover:bg-white/20 transition-colors"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="9" x2="20" y2="9"></line><line x1="4" y1="15" x2="20" y2="15"></line><line x1="9" y1="4" x2="9" y2="20"></line><line x1="15" y1="4" x2="15" y2="20"></line></svg></button>
+                            <div className="w-px h-5 bg-white/20 mx-1"></div>
+                            <button onClick={() => setIsSettingsPanelOpen(true)} title={t('toolbar.settings')} className="p-2 rounded-full text-white hover:bg-white/20 transition-colors"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
+                        </div>
+                    </div>
+
+                    <BoardPanel
+                        isOpen={isBoardPanelOpen}
+                        onClose={() => setIsBoardPanelOpen(false)}
+                        boards={boards}
+                        activeBoardId={activeBoardId}
+                        onSwitchBoard={setActiveBoardId}
+                        onAddBoard={handleAddBoard}
+                        onRenameBoard={handleRenameBoard}
+                        onDuplicateBoard={handleDuplicateBoard}
+                        onDeleteBoard={handleDeleteBoard}
+                        generateBoardThumbnail={(els) => generateBoardThumbnail(els, activeBoard?.canvasBackgroundColor ?? '#111827')}
+                    />
+                    <CanvasSettings 
+                        isOpen={isSettingsPanelOpen} 
+                        onClose={() => setIsSettingsPanelOpen(false)} 
+                        canvasBackgroundColor={canvasBackgroundColor} 
+                        onCanvasBackgroundColorChange={handleCanvasBackgroundColorChange}
+                        language={language}
+                        setLanguage={setLanguage}
+                        uiTheme={uiTheme}
+                        setUiTheme={setUiTheme}
+                        buttonTheme={buttonTheme}
+                        setButtonTheme={setButtonTheme}
+                        wheelAction={wheelAction}
+                        setWheelAction={setWheelAction}
+                        toolbarPosition={toolbarPosition}
+                        setToolbarPosition={setToolbarPosition}
+                        t={t}
+                        useCustomGeminiKey={useCustomGeminiKey}
+                        setUseCustomGeminiKey={setUseCustomGeminiKey}
+                        customGeminiKey={customGeminiKey}
+                        setCustomGeminiKey={setCustomGeminiKey}
+                    />
+                    <Toolbar
+                        t={t}
+                        activeTool={activeTool}
+                        setActiveTool={setActiveTool}
+                        drawingOptions={drawingOptions}
+                        setDrawingOptions={setDrawingOptions}
+                        onUpload={handleAddImageElement}
+                        isCropping={!!croppingState}
+                        onConfirmCrop={handleConfirmCrop}
+                        onCancelCrop={handleCancelCrop}
+                        onUndo={handleUndo}
+                        onRedo={handleRedo}
+                        canUndo={historyIndex > 0}
+                        canRedo={historyIndex < history.length - 1}
+                        position={toolbarPosition}
+                    />
+                    <LayerPanel
+                        t={t}
+                        isOpen={sidePanel.isOpen}
+                        onClose={() => setSidePanel(prev => ({...prev, isOpen: false}))}
+                        activeTab={sidePanel.tab}
+                        setActiveTab={(tab) => setSidePanel(prev => ({...prev, tab}))}
+                        elements={elements}
+                        selectedElementIds={selectedElementIds}
+                        onSelectElement={id => setSelectedElementIds(id ? [id] : [])}
+                        onToggleVisibility={id => handlePropertyChange(id, { isVisible: !(elements.find(el => el.id === id)?.isVisible ?? true) })}
+                        onToggleLock={id => handlePropertyChange(id, { isLocked: !(elements.find(el => el.id === id)?.isLocked ?? false) })}
+                        onRenameElement={(id, name) => handlePropertyChange(id, { name })}
+                        onReorder={handleReorderElements}
+                        frames={frames}
+                        onSelectFrame={(id) => zoomToFrame(id, { animated: true })}
+                        onDeleteFrame={handleDeleteElement}
+                    />
+                </>
+            )}
+
             <div className="flex-grow relative overflow-hidden">
                 <svg
                     ref={svgRef}
@@ -1925,7 +2408,7 @@ const App: React.FC = () => {
                         })}
                     </defs>
                     <g transform={`translate(${panOffset.x}, ${panOffset.y}) scale(${zoom})`}>
-                        <rect x={-panOffset.x/zoom} y={-panOffset.y/zoom} width={`calc(100% / ${zoom})`} height={`calc(100% / ${zoom})`} fill="url(#grid)" />
+                        <rect x={-panOffset.x/zoom} y={-panOffset.y/zoom} width={`calc(100% / ${zoom})`} height={`calc(100% / ${zoom})`} fill={presentationState?.isActive ? 'transparent' : 'url(#grid)'} />
                         
                         {elements.map(el => {
                             if (!isElementVisible(el, elements)) return null;
@@ -1937,7 +2420,7 @@ const App: React.FC = () => {
                                 if (selectedElementIds.length > 1 || el.type === 'path' || el.type === 'arrow' || el.type === 'line' || el.type === 'group') {
                                      const bounds = getElementBounds(el, elements);
                                      selectionComponent = <rect x={bounds.x} y={bounds.y} width={bounds.width} height={bounds.height} fill="none" stroke="rgb(59 130 246)" strokeWidth={2/zoom} strokeDasharray={`${6/zoom} ${4/zoom}`} pointerEvents="none" />
-                                } else if ((el.type === 'image' || el.type === 'shape' || el.type === 'text')) {
+                                } else if ((el.type === 'image' || el.type === 'shape' || el.type === 'text' || el.type === 'video' || el.type === 'frame')) {
                                     const handleSize = 8 / zoom;
                                     const handles = [
                                         { name: 'tl', x: el.x, y: el.y, cursor: 'nwse-resize' }, { name: 'tm', x: el.x + el.width / 2, y: el.y, cursor: 'ns-resize' }, { name: 'tr', x: el.x + el.width, y: el.y, cursor: 'nesw-resize' },
@@ -2034,9 +2517,51 @@ const App: React.FC = () => {
                                     </g>
                                 );
                             }
+                             if (el.type === 'video') {
+                                return (
+                                    <g key={el.id} data-id={el.id}>
+                                        <foreignObject x={el.x} y={el.y} width={el.width} height={el.height}>
+                                            <video 
+                                                src={el.href} 
+                                                controls 
+                                                style={{ width: '100%', height: '100%', borderRadius: '8px' }}
+                                                className={croppingState ? 'opacity-30' : ''}
+                                            ></video>
+                                        </foreignObject>
+                                        {selectionComponent}
+                                    </g>
+                                );
+                            }
                              if (el.type === 'group') {
                                 return <g key={el.id} data-id={el.id}>{selectionComponent}</g>
                              }
+                            if (el.type === 'frame') {
+                                const isEditing = editingElement?.id === el.id;
+                                return (
+                                    <g key={el.id} data-id={el.id}>
+                                        <rect 
+                                            x={el.x} y={el.y} width={el.width} height={el.height}
+                                            fill={el.backgroundColor || 'rgba(100,100,100,0.1)'}
+                                            stroke="rgba(255, 255, 255, 0.5)"
+                                            strokeWidth={2 / zoom}
+                                            strokeDasharray={`${8 / zoom} ${4 / zoom}`}
+                                            pointerEvents="all"
+                                        />
+                                        {!isEditing && (
+                                            <text 
+                                                x={el.x + (8 / zoom)} y={el.y - (8 / zoom)}
+                                                fill="white"
+                                                fontSize={16 / zoom}
+                                                onDoubleClick={(e) => { e.stopPropagation(); setEditingElement({ id: el.id, text: el.name })}}
+                                                className="cursor-pointer select-none"
+                                            >
+                                                {el.name}
+                                            </text>
+                                        )}
+                                        {selectionComponent}
+                                    </g>
+                                );
+                            }
                             return null;
                         })}
 
@@ -2050,7 +2575,7 @@ const App: React.FC = () => {
 
                         {selectedElementIds.length > 0 && !croppingState && !editingElement && (() => {
                             if (selectedElementIds.length > 1) {
-                                const bounds = getSelectionBounds(selectedElementIds);
+                                const bounds = getSelectionBounds(selectedElementIds, elements);
                                 const toolbarScreenWidth = 280;
                                 const toolbarScreenHeight = 56;
                                 
@@ -2080,7 +2605,6 @@ const App: React.FC = () => {
                                     </foreignObject>
                                 );
                             } else if (singleSelectedElement) {
-                                // FIX: Removed incorrect cast to ShapeElement which caused multiple comparison errors.
                                 const element = singleSelectedElement;
                                 const bounds = getElementBounds(element, elements);
                                 let toolbarScreenWidth = 160;
@@ -2091,7 +2615,9 @@ const App: React.FC = () => {
                                 if (element.type === 'text') toolbarScreenWidth = 220;
                                 if (element.type === 'arrow' || element.type === 'line') toolbarScreenWidth = 220;
                                 if (element.type === 'image') toolbarScreenWidth = 340;
+                                if (element.type === 'video') toolbarScreenWidth = 160;
                                 if (element.type === 'group') toolbarScreenWidth = 80;
+                                if (element.type === 'frame') toolbarScreenWidth = 160;
 
                                 const toolbarScreenHeight = 56;
                                 
@@ -2108,6 +2634,7 @@ const App: React.FC = () => {
                                     <div className="p-1.5 bg-white rounded-lg shadow-lg flex items-center justify-center space-x-2 border border-gray-200 text-gray-800">
                                         <button title={t('contextMenu.copy')} onClick={() => handleCopyElement(element)} className="p-2 rounded hover:bg-gray-100 flex items-center justify-center"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>
                                         {element.type === 'image' && <button title={t('contextMenu.download')} onClick={() => handleDownloadImage(element)} className="p-2 rounded hover:bg-gray-100 flex items-center justify-center"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg></button>}
+                                        {element.type === 'video' && <a title={t('contextMenu.download')} href={element.href} download={`video-${element.id}.mp4`} className="p-2 rounded hover:bg-gray-100 flex items-center justify-center"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg></a>}
                                         {element.type === 'image' && <button title={t('contextMenu.crop')} onClick={() => handleStartCrop(element)} className="p-2 rounded hover:bg-gray-100 flex items-center justify-center"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6.13 1L6 16a2 2 0 0 0 2 2h15"></path><path d="M1 6.13L16 6a2 2 0 0 1 2 2v15"></path></svg></button>}
                                         {element.type === 'image' && (
                                             <>
@@ -2194,25 +2721,56 @@ const App: React.FC = () => {
                             return null;
                         })()}
                         {editingElement && (() => {
-                             const element = elements.find(el => el.id === editingElement.id) as TextElement;
+                             const element = elements.find(el => el.id === editingElement.id);
                              if (!element) return null;
-                             return <foreignObject 
-                                x={element.x} y={element.y} width={element.width} height={element.height}
-                                onMouseDown={(e) => e.stopPropagation()}
-                             >
-                                 <textarea
-                                    ref={editingTextareaRef}
-                                    value={editingElement.text}
-                                    onChange={(e) => setEditingElement({ ...editingElement, text: e.target.value })}
-                                    onBlur={() => handleStopEditing()}
-                                    style={{
-                                        width: '100%', height: '100%', border: 'none', padding: 0, margin: 0,
-                                        outline: 'none', resize: 'none', background: 'transparent',
-                                        fontSize: element.fontSize, color: element.fontColor,
-                                        overflow: 'hidden'
-                                    }}
-                                 />
-                             </foreignObject>
+                            
+                             if (element.type === 'text') {
+                                return <foreignObject 
+                                    x={element.x} y={element.y} width={element.width} height={element.height}
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                >
+                                    <textarea
+                                        ref={editingTextareaRef}
+                                        value={editingElement.text}
+                                        onChange={(e) => setEditingElement({ ...editingElement, text: e.target.value })}
+                                        onBlur={() => handleStopEditing()}
+                                        style={{
+                                            width: '100%', height: '100%', border: 'none', padding: 0, margin: 0,
+                                            outline: 'none', resize: 'none', background: 'transparent',
+                                            fontSize: element.fontSize, color: element.fontColor,
+                                            overflow: 'hidden'
+                                        }}
+                                    />
+                                </foreignObject>
+                             }
+
+                             if (element.type === 'frame') {
+                                return <foreignObject
+                                    x={element.x} y={element.y - (20/zoom)} width={200/zoom} height={24/zoom}
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                >
+                                    <input
+                                        ref={editingInputRef}
+                                        type="text"
+                                        value={editingElement.text}
+                                        onChange={(e) => setEditingElement({ ...editingElement, text: e.target.value })}
+                                        onBlur={handleStopEditing}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') handleStopEditing(); }}
+                                        style={{
+                                            width: '100%',
+                                            background: '#333',
+                                            color: 'white',
+                                            border: '1px solid #3b82f6',
+                                            outline: 'none',
+                                            padding: `${2/zoom}px ${4/zoom}px`,
+                                            fontSize: 16 / zoom,
+                                            borderRadius: `${4/zoom}px`,
+                                        }}
+                                    />
+                                </foreignObject>
+                             }
+
+                             return null;
                         })()}
                         {croppingState && (
                              <g>
@@ -2248,7 +2806,7 @@ const App: React.FC = () => {
                     </g>
                 </svg>
                  {contextMenu && (() => {
-                    const hasDrawableSelection = elements.some(el => selectedElementIds.includes(el.id) && el.type !== 'image');
+                    const hasDrawableSelection = elements.some(el => selectedElementIds.includes(el.id) && el.type !== 'image' && el.type !== 'video');
                     const isGroupable = selectedElementIds.length > 1;
                     const isUngroupable = selectedElementIds.length === 1 && elements.find(el => el.id === selectedElementIds[0])?.type === 'group';
 
@@ -2276,18 +2834,35 @@ const App: React.FC = () => {
                     );
                 })()}
             </div>
-            {!croppingState && <PromptBar 
-                t={t}
-                prompt={prompt} 
-                setPrompt={setPrompt} 
-                onGenerate={handleGenerate} 
-                isLoading={isLoading} 
-                isSelectionActive={isSelectionActive} 
-                selectedElementCount={selectedElementIds.length}
-                onAddUserEffect={handleAddUserEffect}
-                userEffects={userEffects}
-                onDeleteUserEffect={handleDeleteUserEffect}
-            />}
+            {presentationState?.isActive ? (
+                <PresentationUI
+                    t={t}
+                    onPrev={() => handleNavigatePresentation('prev')}
+                    onNext={() => handleNavigatePresentation('next')}
+                    onExit={handleExitPresentation}
+                    isPrevDisabled={presentationState.currentFrameIndex === 0}
+                    isNextDisabled={presentationState.currentFrameIndex === frames.length - 1}
+                    transition={presentationState.transition}
+                    onToggleTransition={() => setPresentationState(prev => prev ? { ...prev, transition: prev.transition === 'smooth' ? 'direct' : 'smooth' } : null)}
+                />
+            ) : (
+                !croppingState && <PromptBar 
+                    t={t}
+                    prompt={prompt} 
+                    setPrompt={setPrompt} 
+                    onGenerate={handleGenerate} 
+                    isLoading={isLoading} 
+                    isSelectionActive={isSelectionActive} 
+                    selectedElementCount={selectedElementIds.length}
+                    onAddUserEffect={handleAddUserEffect}
+                    userEffects={userEffects}
+                    onDeleteUserEffect={handleDeleteUserEffect}
+                    generationMode={generationMode}
+                    setGenerationMode={setGenerationMode}
+                    videoAspectRatio={videoAspectRatio}
+                    setVideoAspectRatio={setVideoAspectRatio}
+                />
+            )}
         </div>
     );
 };

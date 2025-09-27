@@ -1,7 +1,10 @@
 
-export type Tool = 'select' | 'pan' | 'draw' | 'erase' | 'rectangle' | 'circle' | 'triangle' | 'text' | 'arrow' | 'highlighter' | 'lasso' | 'line';
+
+export type Tool = 'select' | 'pan' | 'draw' | 'erase' | 'rectangle' | 'circle' | 'triangle' | 'text' | 'arrow' | 'highlighter' | 'lasso' | 'line' | 'frame';
 
 export type WheelAction = 'zoom' | 'pan';
+
+export type GenerationMode = 'image' | 'video';
 
 export interface Point {
   x: number;
@@ -25,6 +28,14 @@ export interface ImageElement extends CanvasElementBase {
   height: number;
   mimeType: string;
   borderRadius?: number;
+}
+
+export interface VideoElement extends CanvasElementBase {
+  type: 'video';
+  href: string; // Blob URL
+  width: number;
+  height: number;
+  mimeType: string;
 }
 
 export interface PathElement extends CanvasElementBase {
@@ -76,8 +87,16 @@ export interface GroupElement extends CanvasElementBase {
     height: number;
 }
 
+export interface FrameElement extends CanvasElementBase {
+  type: 'frame';
+  name: string;
+  width: number;
+  height: number;
+  backgroundColor?: string;
+}
 
-export type Element = ImageElement | PathElement | ShapeElement | TextElement | ArrowElement | LineElement | GroupElement;
+
+export type Element = ImageElement | PathElement | ShapeElement | TextElement | ArrowElement | LineElement | GroupElement | VideoElement | FrameElement;
 
 export interface UserEffect {
   id: string;

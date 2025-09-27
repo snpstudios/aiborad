@@ -1,11 +1,9 @@
-
-
 const QUICK_PROMPTS_EN = [
     { name: 'Image to Figure', value: 'turn this photo into a character figure. Behind it, place a box with the character’s image printed on it, and a computer showing the Blender modeling process on its screen. In front of the box, add a round plastic base with the character figure standing on it. set the scene indoors if possible' },
     { name: 'Change Character Perspective', value: 'change the Camera anglo a high-angled selfie perspective looking down at the woman, while preserving her exact facial features, expression, and clothing, Maintain the same living room interior background with the sofa, natural lighting, and overall photographic composition and style.' },
     { name: 'Architecture to Model', value: 'convert this photo into a architecture model. Behind the model, there should be a cardboard box with an image of the architecture from the photo on it. There should also be a computer, with the content on the computer screen showing the Blender modeling process of the figurine. In front of the cardboard box, place a cardstock and put the architecture model from the photo I provided on it. I hope the PVC material can be clearly presented. It would be even better if the background is indoors.' },
     { name: 'Combine Objects', value: 'Combine them together' },
-    { name: 'High-Res Restoration', value: 'Enhance this image to high resolution'  },
+    { name: 'High-Res Restoration', value: 'Enhance this image to high resolution' },
     { name: 'Image to Line Art', value: 'Turn into a line art hand-drawn sketch' },
     { name: 'Color with Palette', value: 'Color accurately using the color palette' },
     { name: 'Generate Character Sheet', value: 'Generate a Character Design Sheet for me\n\nScale settings (comparison of different heights, head-to-body ratio, etc.)\n\nThree-view drawing (front, side, back)\n\nExpression Sheet\n\nPose Sheet → Various common poses\n\nCostume Design' },
@@ -79,13 +77,16 @@ export const translations = {
       triangle: 'Triangle',
       arrow: 'Arrow',
       line: 'Line',
+      frame: 'Frame',
       text: 'Text',
       erase: 'Erase',
       strokeColor: 'Stroke Color',
       strokeWidth: 'Stroke Width',
       upload: 'Upload Image',
-      settings: 'Canvas Settings',
+      settings: 'Settings',
       layers: 'Layers',
+      frames: 'Frames',
+      boards: 'Boards',
       crop: {
         title: 'Crop Image',
         cancel: 'Cancel',
@@ -94,9 +95,16 @@ export const translations = {
     },
     promptBar: {
         placeholderDefault: 'Describe an image to generate from scratch...',
+        placeholderDefaultVideo: 'Describe a video to generate from scratch...',
         placeholderSingle: 'Describe the changes or select a quick effect...',
         placeholderMultiple: (count: number) => `Using ${count} elements as context. Describe the result or select an effect...`,
-        generate: 'Generate Image',
+        generate: 'Generate',
+        imageMode: 'Image',
+        videoMode: 'Video',
+        aspectRatioHorizontal: 'Horizontal (16:9)',
+        aspectRatioVertical: 'Vertical (9:16)',
+        switchToVideo: 'Switch to Video Mode',
+        switchToImage: 'Switch to Image Mode',
     },
     quickPromptsAriaLabel: 'Select a quick effect',
     quickPrompts: QUICK_PROMPTS_EN,
@@ -120,11 +128,23 @@ export const translations = {
         mouseWheel: 'Mouse Wheel',
         zoom: 'Zoom',
         scroll: 'Scroll',
-        geminiApiKey: 'Gemini API Key',
-        useCustomKey: 'Use Custom API Key',
-        saveKey: 'Save Key',
-        resetKey: 'Reset to Default',
-        keySaved: 'API Key saved successfully',
+        toolbarPosition: 'Toolbar Position',
+        left: 'Left',
+        right: 'Right',
+        geminiApiKey: {
+          title: 'Gemini API Key',
+          useCustomKey: 'Use custom API key',
+          apiKeyLabel: 'API Key',
+          apiKeyPlaceholder: 'Enter your API key',
+          saveAndValidate: 'Save & Validate',
+          reset: 'Reset',
+          validation: {
+            valid: 'API key is valid',
+            invalid: 'API key is invalid',
+            saving: 'Validating...',
+            empty: 'Please enter an API key'
+          }
+        }
     },
     contextMenu: {
         copy: 'Copy',
@@ -156,6 +176,18 @@ export const translations = {
             alignMiddle: 'Align Middle',
             alignBottom: 'Align Bottom',
         },
+    },
+    sidePanel: {
+        layers: 'Layers',
+        frames: 'Frames',
+        present: 'Present',
+        noFrames: 'No frames on this board.',
+        deleteFrame: 'Delete Frame',
+    },
+    presentation: {
+        exit: 'Exit Presentation',
+        smooth: 'Smooth',
+        direct: 'Direct',
     }
   },
   zho: {
@@ -174,13 +206,16 @@ export const translations = {
       triangle: '三角形',
       arrow: '箭头',
       line: '直线',
+      frame: '画框',
       text: '文本',
       erase: '橡皮擦',
       strokeColor: '描边颜色',
       strokeWidth: '描边宽度',
       upload: '上传图片',
-      settings: '画布设置',
+      settings: '设置',
       layers: '图层',
+      frames: '画框',
+      boards: '画板',
       crop: {
         title: '裁剪图片',
         cancel: '取消',
@@ -189,9 +224,16 @@ export const translations = {
     },
     promptBar: {
         placeholderDefault: '描述一下您想生成什么样的图片...',
+        placeholderDefaultVideo: '描述一下您想生成什么样的视频...',
         placeholderSingle: '描述要做的修改，或选择一个快捷效果...',
         placeholderMultiple: (count: number) => `已选择 ${count} 个元素作为上下文。请描述结果或选择一个效果...`,
-        generate: '生成图片',
+        generate: '生成',
+        imageMode: '图片',
+        videoMode: '视频',
+        aspectRatioHorizontal: '横向 (16:9)',
+        aspectRatioVertical: '纵向 (9:16)',
+        switchToVideo: '切换到视频模式',
+        switchToImage: '切换到图片模式',
     },
     quickPromptsAriaLabel: '选择一个快捷效果',
     quickPrompts: QUICK_PROMPTS_ZHO,
@@ -215,12 +257,23 @@ export const translations = {
         mouseWheel: '鼠标滚轮',
         zoom: '缩放',
         scroll: '滚动',
-        geminiApiKey: 'Gemini API密钥',
-        useCustomKey: '使用自定义API密钥',
-        saveKey: '保存密钥',
-        validatingKey: '验证中...',
-        resetKey: '重置为默认',
-        keySaved: 'API密钥保存成功',
+        toolbarPosition: '工具栏位置',
+        left: '左侧',
+        right: '右侧',
+        geminiApiKey: {
+          title: 'Gemini API密钥',
+          useCustomKey: '使用自定义API密钥',
+          apiKeyLabel: 'API密钥',
+          apiKeyPlaceholder: '输入你的API密钥',
+          saveAndValidate: '保存并验证',
+          reset: '重置',
+          validation: {
+            valid: 'API密钥有效',
+            invalid: 'API密钥无效',
+            saving: '验证中...',
+            empty: '请输入API密钥'
+          }
+        }
     },
     contextMenu: {
         copy: '复制',
@@ -252,6 +305,18 @@ export const translations = {
             alignMiddle: '垂直居中',
             alignBottom: '底对齐',
         },
+    },
+    sidePanel: {
+        layers: '图层',
+        frames: '画框',
+        present: '演示',
+        noFrames: '此画板上没有画框。',
+        deleteFrame: '删除画框',
+    },
+    presentation: {
+        exit: '退出演示',
+        smooth: '平滑',
+        direct: '直接',
     }
   }
 };

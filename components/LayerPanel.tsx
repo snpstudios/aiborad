@@ -1,11 +1,13 @@
 
 
-import React, { useState, useRef, useEffect, useMemo } from 'react';
-import type { Element } from '../types';
+import React, { useState, useRef, useEffect } from 'react';
+import type { Element, FrameElement } from '../types';
 
-interface LayerPanelProps {
+interface SidePanelProps {
     isOpen: boolean;
     onClose: () => void;
+    activeTab: 'layers' | 'frames';
+    setActiveTab: (tab: 'layers' | 'frames') => void;
     elements: Element[];
     selectedElementIds: string[];
     onSelectElement: (id: string | null) => void;
@@ -13,7 +15,12 @@ interface LayerPanelProps {
     onToggleLock: (id: string) => void;
     onRenameElement: (id: string, name: string) => void;
     onReorder: (draggedId: string, targetId: string, position: 'before' | 'after') => void;
+    frames: FrameElement[];
+    onSelectFrame: (id: string) => void;
+    onDeleteFrame: (id: string) => void;
+    t: (key: string) => string;
 }
+
 
 const getElementIcon = (element: Element): React.ReactNode => {
     const commonProps = {
@@ -30,6 +37,8 @@ const getElementIcon = (element: Element): React.ReactNode => {
     switch (element.type) {
         case 'image': 
             return <svg {...commonProps}><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>;
+        case 'video': 
+            return <svg {...commonProps}><path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2" ry="2"/></svg>;
         case 'text': 
             return <svg {...commonProps}><polyline points="4 7 4 4 20 4 20 7"></polyline><line x1="9" y1="20" x2="15" y2="20"></line><line x1="12" y1="4" x2="12" y2="20"></line></svg>;
         case 'shape':
@@ -41,6 +50,8 @@ const getElementIcon = (element: Element): React.ReactNode => {
             break;
         case 'group': 
             return <svg {...commonProps}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>;
+        case 'frame': 
+            return <svg {...commonProps} strokeDasharray="2 4"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>;
         case 'path': 
             return <svg {...commonProps}><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>;
         case 'arrow': 
@@ -53,7 +64,6 @@ const getElementIcon = (element: Element): React.ReactNode => {
     return <svg {...commonProps}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path></svg>;
 };
 
-// FIX: Changed drag handler prop types to match standard React event handlers.
 const LayerItem: React.FC<{
     element: Element;
     level: number;
@@ -148,8 +158,11 @@ const LayerItem: React.FC<{
     );
 };
 
-export const LayerPanel: React.FC<LayerPanelProps> = ({ isOpen, onClose, elements, selectedElementIds, onSelectElement, onToggleVisibility, onToggleLock, onRenameElement, onReorder }) => {
-    const panelRef = useRef<HTMLDivElement>(null);
+export const LayerPanel: React.FC<SidePanelProps> = ({ 
+    isOpen, onClose, activeTab, setActiveTab,
+    elements, selectedElementIds, onSelectElement, onToggleVisibility, onToggleLock, onRenameElement, onReorder,
+    frames, onSelectFrame, onDeleteFrame, t
+}) => {
     const [dragOverId, setDragOverId] = useState<string | null>(null);
 
     const handleDragStart = (e: React.DragEvent<HTMLDivElement>, id: string) => {
@@ -184,42 +197,8 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({ isOpen, onClose, element
         }
     };
     
-    const elementMap = useMemo(() => new Map(elements.map(el => [el.id, el])), [elements]);
-    const rootElements = useMemo(() => elements.filter(el => !el.parentId), [elements]);
-
-    const renderLayers = (elementIds: string[], level: number) => {
-        return elementIds.map(id => {
-            const element = elementMap.get(id);
-            if (!element) return null;
-
-            const childrenIds = elements.filter(el => el.parentId === id).map(el => el.id);
-
-            return (
-                <React.Fragment key={id}>
-                    <div data-id={id} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={(e) => handleDrop(e, id)}>
-                        <LayerItem
-                            element={element}
-                            level={level}
-                            isSelected={selectedElementIds.includes(id)}
-                            onSelect={() => onSelectElement(id)}
-                            onToggleLock={() => onToggleLock(id)}
-                            onToggleVisibility={() => onToggleVisibility(id)}
-                            onRename={name => onRenameElement(id, name)}
-                            onDragStart={e => handleDragStart(e, id)}
-                            onDragOver={handleDragOver}
-                            onDragLeave={handleDragLeave}
-                            onDrop={(e) => handleDrop(e, id)}
-                        />
-                    </div>
-                    {childrenIds.length > 0 && renderLayers(childrenIds, level + 1)}
-                </React.Fragment>
-            );
-        });
-    };
-
-    // Render elements in their actual array order for Z-index representation
-    const renderOrderedLayers = (elements: Element[], level: number = 0, parentId?: string) => {
-        return elements
+    const renderOrderedLayers = (allElements: Element[], level: number = 0, parentId?: string) => {
+        return allElements
             .filter(el => el.parentId === parentId)
             .map(element => (
                 <React.Fragment key={element.id}>
@@ -238,7 +217,7 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({ isOpen, onClose, element
                             onDrop={(e) => handleDrop(e, element.id)}
                         />
                      </div>
-                    {renderOrderedLayers(elements, level + 1, element.id)}
+                    {renderOrderedLayers(allElements, level + 1, element.id)}
                 </React.Fragment>
             ));
     };
@@ -248,19 +227,67 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({ isOpen, onClose, element
 
     return (
         <div 
-            ref={panelRef}
-            className="absolute top-4 right-4 z-20 flex flex-col w-64 h-[calc(100vh-2rem)] backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl text-white overflow-hidden"
+            className="absolute top-16 right-4 z-20 flex flex-col w-64 h-[calc(100vh-5rem)] backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl text-white overflow-hidden"
             style={{ backgroundColor: 'var(--ui-bg-color)' }}
         >
-            <div className="flex-shrink-0 flex justify-between items-center p-3 border-b border-white/10 cursor-move">
-                <h3 className="text-base font-semibold">Layers</h3>
+            <div className="flex-shrink-0 flex justify-between items-center p-3 border-b border-white/10">
+                <div className="flex items-center gap-2 p-1 bg-black/20 rounded-md">
+                    <button 
+                        onClick={() => setActiveTab('layers')}
+                        className={`px-3 py-1 text-sm rounded ${activeTab === 'layers' ? 'bg-blue-500 text-white' : 'hover:bg-white/10'}`}
+                    >
+                        {t('sidePanel.layers')}
+                    </button>
+                    <button 
+                        onClick={() => setActiveTab('frames')}
+                        className={`px-3 py-1 text-sm rounded ${activeTab === 'frames' ? 'bg-blue-500 text-white' : 'hover:bg-white/10'}`}
+                    >
+                        {t('sidePanel.frames')}
+                    </button>
+                </div>
                 <button onClick={onClose} className="text-gray-400 hover:text-white p-1 rounded-full">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                 </button>
             </div>
-            <div className="flex-grow p-2 overflow-y-auto">
-                 {renderOrderedLayers([...elements].reverse())}
-            </div>
+            {activeTab === 'layers' ? (
+                <div className="flex-grow p-2 overflow-y-auto">
+                    {renderOrderedLayers([...elements].reverse())}
+                </div>
+            ) : (
+                 <div className="flex-grow flex flex-col">
+                    <div className="flex-grow p-2 overflow-y-auto space-y-1">
+                        {frames.length > 0 ? frames.map(frame => (
+                            <div 
+                                key={frame.id}
+                                draggable
+                                onDragStart={(e) => handleDragStart(e, frame.id)}
+                                onDragOver={handleDragOver}
+                                onDrop={(e) => handleDrop(e, frame.id)}
+                                onDragLeave={handleDragLeave}
+                                data-id={frame.id}
+                                className="group flex items-center justify-between p-2 rounded-md hover:bg-white/10"
+                            >
+                                <button
+                                    onClick={() => onSelectFrame(frame.id)}
+                                    className="flex items-center gap-2 flex-grow text-left text-white/90 text-sm transition-colors truncate"
+                                >
+                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0"><path d="M6 9V5a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v4"/><path d="M3 13h18"/><path d="M18 17v4a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-4"/></svg>
+                                    <span className="truncate">{frame.name}</span>
+                                </button>
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); onDeleteFrame(frame.id); }}
+                                    title={t('sidePanel.deleteFrame')}
+                                    className="ml-2 p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-red-500/50 text-red-300 transition-opacity flex-shrink-0"
+                                >
+                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                </button>
+                            </div>
+                        )) : (
+                            <p className="px-2 py-4 text-xs text-center text-gray-500">{t('sidePanel.noFrames')}</p>
+                        )}
+                    </div>
+                 </div>
+            )}
         </div>
     );
 };

@@ -388,6 +388,89 @@ app.post('/api/gemini/generate-image', async (req, res) => {
   }
 });
 
+/**
+ * 从文本或图像生成视频
+ */
+app.post('/api/gemini/generate-video', async (req, res) => {
+  try {
+    // 检查当前日期是否在2025年12月20日之后
+    const currentDate = new Date();
+    const deadlineDate = new Date('2025-12-20T00:00:00.000Z');
+    
+    if (currentDate >= deadlineDate) {
+      // 检查是否有用户自定义的API密钥
+      const userApiKey = req.headers['x-gemini-api-key'];
+      if (!userApiKey || typeof userApiKey !== 'string' || userApiKey.trim() === '') {
+        return res.status(400).json({
+          success: false,
+          error: '从2025年12月20日开始，使用视频生成功能需要提供自定义的Gemini API密钥。请在设置中添加您的API密钥。'
+        });
+      }
+    }
+
+    const { prompt, aspectRatio, image } = req.body;
+
+    if (!prompt || prompt.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        error: 'Prompt is required'
+      });
+    }
+
+    if (!aspectRatio || !['16:9', '9:16'].includes(aspectRatio)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid aspectRatio is required (16:9 or 9:16)'
+      });
+    }
+
+    // 获取适合的AI客户端（根据请求头决定是否使用用户自定义API密钥）
+    const ai = getAIClientFromRequest(req);
+
+    // 准备图像参数（如果提供）
+    const imagePart = image ? {
+      imageBytes: image.href.split(',')[1],
+      mimeType: image.mimeType,
+    } : undefined;
+
+    // 生成视频
+    let operation = await ai.models.generateVideos({
+      model: 'veo-2.0-generate-001',
+      prompt: prompt,
+      image: imagePart,
+      config: {
+        numberOfVideos: 1,
+        aspectRatio: aspectRatio,
+      }
+    });
+
+    // 轮询操作状态，直到完成
+    let completedOperation = await operation.wait();
+
+    if (completedOperation.generatedVideos && completedOperation.generatedVideos.length > 0) {
+      const video = completedOperation.generatedVideos[0];
+      return res.status(200).json({
+        success: true,
+        videoBytes: video.video.videoBytes,
+        mimeType: 'video/mp4'
+      });
+    } else {
+      return res.status(200).json({
+        success: false,
+        videoBytes: null,
+        mimeType: null,
+        textResponse: "The AI did not generate a video. Please try a different prompt."
+      });
+    }
+  } catch (error) {
+    console.error('Error in generate-video endpoint:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'An unknown error occurred'
+    });
+  }
+});
+
 // 错误处理中间件
 app.use((err, req, res, next) => {
   console.error('Error:', err);
@@ -402,4 +485,4 @@ app.listen(port, () => {
   console.log(`Backend server running on port ${port}`);
   console.log(`API endpoints available at http://localhost:${port}/api`);
   console.log('Make sure you have set your GEMINI_API_KEY in the .env file');
-}); 
+});

@@ -444,16 +444,75 @@ app.post('/api/gemini/generate-video', async (req, res) => {
       }
     });
 
-    // 轮询操作状态，直到完成
-    let completedOperation = await operation.wait();
+    // 实现轮询机制，直到视频生成完成（参考前端demo实现）
+    // 轮询间隔为10秒
+    while (!operation.done) {
+      console.log('Video generation in progress...');
+      await new Promise(resolve => setTimeout(resolve, 10000));
+      // 获取更新的操作状态
+      try {
+        operation = await ai.operations.getVideosOperation({operation: operation});
+      } catch (pollError) {
+        console.error('Error polling video generation status:', pollError);
+        // 继续轮询，不中断过程
+      }
+    }
 
-    if (completedOperation.generatedVideos && completedOperation.generatedVideos.length > 0) {
-      const video = completedOperation.generatedVideos[0];
-      return res.status(200).json({
-        success: true,
-        videoBytes: video.video.videoBytes,
-        mimeType: 'video/mp4'
+    // 检查是否有错误
+    if (operation.error) {
+      console.error('Video generation failed:', operation.error);
+      return res.status(400).json({
+        success: false,
+        error: operation.error.message || 'Video generation failed'
       });
+    }
+
+    // 检查是否生成了视频
+    if (operation.response?.generatedVideos && operation.response.generatedVideos.length > 0) {
+      const video = operation.response.generatedVideos[0];
+      
+      // 参考前端demo实现：获取下载链接并下载视频文件
+      const downloadLink = video.video?.uri;
+      if (!downloadLink) {
+        console.error('Video was generated but no download link was found');
+        return res.status(200).json({
+          success: false,
+          videoBytes: null,
+          mimeType: null,
+          textResponse: "Video was generated but no download link was found."
+        });
+      }
+      
+      try {
+        // 下载视频文件
+        console.log('Downloading video from:', downloadLink);
+        const response = await fetch(`${downloadLink}&key=${req.headers['x-gemini-api-key']}`);
+        
+        if (!response.ok) {
+          throw new Error(`Failed to download video: ${response.statusText}`);
+        }
+        
+        // 在Node.js环境中，使用arrayBuffer()获取视频数据然后转换为Buffer
+        const arrayBuffer = await response.arrayBuffer();
+        const videoBuffer = Buffer.from(arrayBuffer);
+        // 转换为base64编码
+        const videoBase64 = videoBuffer.toString('base64');
+        
+        const mimeType = response.headers.get('Content-Type') || 'video/mp4';
+        
+        return res.status(200).json({
+          success: true,
+          videoBytes: videoBase64,
+          mimeType: mimeType
+        });
+        
+      } catch (e) {
+        console.error('Failed to download or process video:', e);
+        return res.status(500).json({
+          success: false,
+          error: `Failed to download or process video: ${e.message}`
+        });
+      }
     } else {
       return res.status(200).json({
         success: false,
